@@ -26,7 +26,7 @@ import {
 } from "@tanstack/react-query";
 import { Toaster, toast } from "sonner";
 import { useState } from "react";
-import { SkyArc } from "./components/SkyArc";
+import { SpinningCube } from "./components/SpinningCube";
 import { Link } from "react-router";
 
 // Detailed Pomodoro state
@@ -410,8 +410,8 @@ function KubiDashboard() {
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 p-6 pb-24 font-montserrat">
       <div className="max-w-md mx-auto space-y-6">
-        {/* SKY ARC COMPONENT */}
-        <SkyArc data={data} />
+        {/* 3D WIREFRAME SPINNING CUBE */}
+        <SpinningCube />
 
         {/* HEADER */}
         <header className="space-y-1 mb-6 mt-4 text-center">
