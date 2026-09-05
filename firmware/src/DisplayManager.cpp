@@ -164,9 +164,6 @@ void DisplayManager::drawAnalogClockFace(int hour, int minute, int wday, int mda
 
     _tft.fillScreen(TFT_BLACK);
 
-    // Subtle outer dial bezel ring
-    _tft.drawCircle(cx, cy, 96, 0x2965);
-
     // 12 Numbers arranged in clock circle
     int radiusNumbers = 82;
     _tft.setTextDatum(MC_DATUM);
