@@ -1,4 +1,4 @@
-﻿#include <Arduino.h>
+#include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiMulti.h>
 #include <WiFiUdp.h>
@@ -354,14 +354,18 @@ void core1HardwareTask(void * parameter) {
       } else {
         struct tm timeinfo;
         int currentHour = 12, currentMin = 0;
+        int currentWday = 4, currentMday = 3, currentMon = 8;
         if (getLocalTime(&timeinfo)) {
           currentHour = timeinfo.tm_hour;
           currentMin = timeinfo.tm_min;
+          currentWday = timeinfo.tm_wday;
+          currentMday = timeinfo.tm_mday;
+          currentMon = timeinfo.tm_mon;
         }
 
         switch (currentMode) {
           case MODE_CLOCK_IDLE:
-            display.drawClockFace(currentHour, currentMin, clockShowDetails, "Design Review 14:00", "^ AAPL +1.2% | BTC $92k");
+            display.drawClockFace(currentHour, currentMin, currentWday, currentMday, currentMon, clockShowDetails, "Design Review 14:00", "^ AAPL +1.2% | BTC $92k");
             break;
 
           case MODE_POMODORO:

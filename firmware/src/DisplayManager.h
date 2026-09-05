@@ -15,8 +15,8 @@ public:
     void wakeScreen(uint32_t durationMs = 30000);
     void loop(); // Handles sleep timeout
 
-    // Face Renderers
     void drawBootScreen(const String& status);
+    void drawClockFace(int hour, int minute, int wday, int mday, int month, bool showDetails, const String& nextEvent = "", const String& ticker = "");
     void drawClockFace(int hour, int minute, bool showDetails, const String& nextEvent = "", const String& ticker = "");
     void drawPomodoroFace(int remainingSeconds, int totalSeconds, const char* phaseName, bool isPaused, uint16_t textColor, int currentCycle = 0, int cycleTarget = 4);
     void drawMascotFace(float temperature, int hourOfDay);

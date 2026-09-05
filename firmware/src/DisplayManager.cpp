@@ -97,6 +97,10 @@ void DisplayManager::drawBootScreen(const String& status) {
 }
 
 void DisplayManager::drawClockFace(int hour, int minute, bool showDetails, const String& nextEvent, const String& ticker) {
+    drawClockFace(hour, minute, -1, 1, 0, showDetails, nextEvent, ticker);
+}
+
+void DisplayManager::drawClockFace(int hour, int minute, int wday, int mday, int month, bool showDetails, const String& nextEvent, const String& ticker) {
     int w = _tft.width();
     int h = _tft.height();
     int cx = w / 2;
@@ -107,11 +111,22 @@ void DisplayManager::drawClockFace(int hour, int minute, bool showDetails, const
     char timeBuf[16];
     snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", hour, minute);
 
+    char dateBuf[32] = "";
+    if (wday >= 0 && wday < 7 && month >= 0 && month < 12 && mday >= 1 && mday <= 31) {
+        static const char* const DAY_NAMES[] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+        static const char* const MONTH_NAMES[] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+        snprintf(dateBuf, sizeof(dateBuf), "%s, %d %s", DAY_NAMES[wday], mday, MONTH_NAMES[month]);
+    }
+
     if (!showDetails) {
         // Pure Minimalist Mode
         _tft.setTextDatum(MC_DATUM);
         _tft.setTextColor(TFT_WHITE, TFT_BLACK);
         _tft.drawString(timeBuf, cx, cy, 7); // Large 7-segment digital font
+
+        if (dateBuf[0] != '\0') {
+            _tft.drawString(dateBuf, cx, cy + 40, 2);
+        }
     } else {
         // Tap Detailed Mode: Clock slides up to reveal calendar + ticker
         _tft.setTextDatum(MC_DATUM);
