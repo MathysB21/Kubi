@@ -24,7 +24,7 @@ Core firmware modules are shared 1:1 between real silicon and desktop simulation
 - [`firmware/sim/src/sim_main.cpp`](file:///c:/Development/Kubi/firmware/sim/src/sim_main.cpp): Desktop simulation runner and HTTP API.
 - [`firmware/sim/src/TFT_eSPI_Mock.cpp`](file:///c:/Development/Kubi/firmware/sim/src/TFT_eSPI_Mock.cpp): Framebuffer rasterizer.
 - [`firmware/sim/include/Preferences.h`](file:///c:/Development/Kubi/firmware/sim/include/Preferences.h): Desktop NVS Preferences emulation with file persistence (`kubi_sim_prefs.txt`).
-- [`dashboard/src/Simulator.tsx`](file:///c:/Development/Kubi/dashboard/src/Simulator.tsx): Web-based digital twin workbench.
+- [`dashboard/src/pages/Simulator.tsx`](file:///c:/Development/Kubi/dashboard/src/pages/Simulator.tsx): Web-based digital twin workbench.
 
 ## 4. Build & Verification Commands
 - Real Silicon: `& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run`
