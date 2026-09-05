@@ -122,3 +122,13 @@ Kubi uses **Software-in-the-Loop** simulation:
 
 - Desktop mocks reside in `firmware/sim/include/`.
 - `Preferences.h` mock replicates the ESP32 NVS `Preferences` API and synchronizes key-value pairs to `kubi_sim_prefs.txt` in the working directory on `put*()` / `end()`. This ensures settings such as `clockAnalog`, Pomodoro intervals, and iCal URLs survive simulator restarts without hardware connected.
+
+---
+
+## 7. Knowledge Base & Session Documentation (`docs/knowledge/`)
+
+- Project knowledge documents reside in `docs/knowledge/`.
+- **Skill**: Activate the `project-knowledge` skill (`.agents/skills/project-knowledge/SKILL.md`).
+- **Reading Rule**: When consulting past decisions or features, read **ONLY** `docs/knowledge/index.md` first. Inspect the index table, select only the relevant topic doc(s), and do **not** dump all documents into context.
+- **Recording Rule**: When asked to record session knowledge, create one or more dated docs (`YYYY-MM-DD-<slug>.md`) in `docs/knowledge/` separating topics cleanly, update `docs/knowledge/index.md`, and commit.
+
