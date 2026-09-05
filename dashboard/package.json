@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "sim": "powershell -ExecutionPolicy Bypass -File ../firmware/sim/run_sim.ps1",
+    "sim:build": "powershell -ExecutionPolicy Bypass -File ../firmware/sim/build_sim.ps1",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"

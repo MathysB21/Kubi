@@ -8,7 +8,22 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": {
-        target: "http://kubi.local", // The permanent mDNS hostname!
+        target: process.env.VITE_BACKEND_URL || "http://127.0.0.1:8080",
+        changeOrigin: true,
+        secure: false,
+      },
+      "/sim/frame": {
+        target: process.env.VITE_BACKEND_URL || "http://127.0.0.1:8080",
+        changeOrigin: true,
+        secure: false,
+      },
+      "/sim/state": {
+        target: process.env.VITE_BACKEND_URL || "http://127.0.0.1:8080",
+        changeOrigin: true,
+        secure: false,
+      },
+      "/sim/inject": {
+        target: process.env.VITE_BACKEND_URL || "http://127.0.0.1:8080",
         changeOrigin: true,
         secure: false,
       },
