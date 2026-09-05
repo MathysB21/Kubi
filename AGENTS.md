@@ -79,9 +79,40 @@ Kubi uses **Software-in-the-Loop** simulation:
      ```powershell
      & "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run
      ```
-2. **Keep Core Firmware Pure**:
-   - Do not add desktop-specific `#ifdef` hacks directly into `firmware/src/*.cpp` unless necessary. Keep simulation mocks isolated inside `firmware/sim/`.
-3. **C/C++ Preprocessor Comment Gotcha**:
+2. **Do NOT Launch or Kill the Simulator Automatically**:
+   - The user runs `kubi_sim.exe` in an external shell window.
+   - Do **NOT** invoke `run_sim.ps1` or run `kubi_sim.exe` in the background unless explicitly requested.
+   - Because Windows locks the running `kubi_sim.exe` binary, attempting to compile directly to `kubi_sim.exe` with `build_sim.ps1` will fail with permission errors while the process is active. When testing clang++ builds, output to a temporary binary (e.g., `kubi_sim_test.exe`) or ask the user to restart/rebuild.
+3. **Keep Core Firmware Pure**:
+   - Do not add desktop-specific `#ifdef` hacks directly into `firmware/src/*.cpp` unless strictly necessary. Keep simulation mocks isolated inside `firmware/sim/`.
+4. **Suppress False Taps During Orientation Changes**:
+   - Rolling or flipping the cube produces high accelerometer delta transients (`deltaMag > 7.0f`).
+   - In `SensorManager::updateFace()`, always update `_lastTapTime = millis()` during candidate face transitions and when orientation settles to avoid triggering false tap gestures.
+5. **C/C++ Preprocessor Comment Gotcha**:
    - Never end a single-line comment with a trailing backslash (`// \`). In standard C/C++, this joins the next line to the comment as a line continuation, deleting whatever was on that line!
-4. **When Modifying Frontend**:
+6. **When Modifying Frontend**:
    - Always run `npm run build` in `dashboard/` to verify TypeScript types and Vite build integrity.
+
+---
+
+## 5. Face Modes & Functional Specifications
+
+* **Face 1: Focus Clock Face**:
+  - Clean minimalist digital time display (large 7-segment font) centered on screen.
+  - Date display formatted as `[Day, D Mon]` (e.g. `Thu, 3 Sep`, `Sat, 8 Aug`) centered 40px below the time in 1/4 size font (Font 2).
+  - **Shake Gesture (`GESTURE_SHAKE`)**: Toggles between digital 7-segment clock and a clean analog clock view (12 radial numbers, 3px orange hour hand, 2px white minute hand, center pivot, and date below, without any circular border).
+  - **View Persistence**: The user's digital vs. analog view choice is preserved in NVS Preferences (`"kubi_settings"` namespace, key `"clockAnalog"`) on hardware and in `kubi_sim_prefs.txt` in the simulator.
+* **Face 2: Pomodoro Timer**:
+  - Auto-plays upon tilting face up.
+  - Gentle tap toggles pause/play. Shake gesture skips to next phase.
+* **Face 3: Mascot & Room Temp**:
+  - Animated bouncing Kubi jelly character and live room temperature readings from BMP280.
+* **Face 4: Schedule Agenda**:
+  - Google Calendar 3-day agenda fetched via iCal URL. Gentle tap pages through agenda items.
+
+---
+
+## 6. Desktop Simulation HAL & Preferences Persistence
+
+- Desktop mocks reside in `firmware/sim/include/`.
+- `Preferences.h` mock replicates the ESP32 NVS `Preferences` API and synchronizes key-value pairs to `kubi_sim_prefs.txt` in the working directory on `put*()` / `end()`. This ensures settings such as `clockAnalog`, Pomodoro intervals, and iCal URLs survive simulator restarts without hardware connected.
