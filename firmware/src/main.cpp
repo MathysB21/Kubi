@@ -37,7 +37,7 @@ volatile float diagAccelZ = 1.0f;
 static std::vector<String> cachedAgenda;
 static int schedulePage = 0;
 static bool clockShowDetails = false;
-static bool clockAnalogView = false;
+bool clockAnalogView = false;
 static uint32_t clockDetailsTimeout = 0;
 
 // --- NETWORK & TIME CONFIG ---
@@ -328,8 +328,11 @@ void core1HardwareTask(void * parameter) {
               pomodoro.handleShake();
             } else if (currentMode == MODE_CLOCK_IDLE) {
               clockAnalogView = !clockAnalogView;
+              preferences.begin("kubi_settings", false);
+              preferences.putBool("clockAnalog", clockAnalogView);
+              preferences.end();
               audio.playChime(CHIME_TAP_FEEDBACK);
-              Serial.printf("[CLOCK] Shake detected -> Switched to %s clock view\n", clockAnalogView ? "analog" : "digital");
+              Serial.printf("[CLOCK] Shake detected -> Switched to %s clock view (saved to NVS)\n", clockAnalogView ? "analog" : "digital");
             }
             break;
 
@@ -450,8 +453,9 @@ void setup() {
 
   // 7. Load Persistent Settings from NVS
   preferences.begin("kubi_settings", false);
-  secretIcalUrl = preferences.getString("icalUrl", "");
-  tzOffset      = preferences.getInt("tzOffset", 2);
+  secretIcalUrl   = preferences.getString("icalUrl", "");
+  tzOffset        = preferences.getInt("tzOffset", 2);
+  clockAnalogView = preferences.getBool("clockAnalog", false);
   preferences.end();
 
   // 8. Sync Clock via NTP

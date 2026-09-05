@@ -1,4 +1,4 @@
-﻿#include "API.h"
+#include "API.h"
 #include <Preferences.h>
 #include <AsyncJson.h>
 #include <ArduinoJson.h>
@@ -13,6 +13,7 @@ extern volatile int batteryPercentage;
 extern String secretIcalUrl;
 extern volatile bool isScreenOverrideActive;
 extern String screenOverrideText;
+extern bool clockAnalogView;
 
 // Diagnostics
 extern volatile float diagAccelX;
@@ -55,6 +56,7 @@ void setupAPIRoutes(AsyncWebServer& server) {
         // Convenience top-level fields for backwards compatibility
         doc["pomodoroFocus"] = pomodoro.getFocusMinutes();
         doc["pomodoroBreak"] = pomodoro.getShortBreakMinutes();
+        doc["clockAnalog"] = clockAnalogView;
 
         serializeJson(doc, *response);
         request->send(response);
@@ -111,6 +113,14 @@ void setupAPIRoutes(AsyncWebServer& server) {
 
         if (colorChanged) {
             pomodoro.setColors(cWork, cShort, cLong);
+        }
+
+        if (jsonObj["clockAnalog"].is<bool>()) {
+            clockAnalogView = jsonObj["clockAnalog"].as<bool>();
+            Preferences prefs;
+            prefs.begin("kubi_settings", false);
+            prefs.putBool("clockAnalog", clockAnalogView);
+            prefs.end();
         }
 
         request->send(200, "application/json", "{\"status\":\"success\"}");

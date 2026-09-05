@@ -35,6 +35,7 @@ SimSerial Serial;
 SimESP ESP;
 TwoWire Wire;
 std::map<std::string, std::map<std::string, std::string>> Preferences::_storage;
+bool Preferences::_loaded = false;
 
 // Shared Kubi runtime state globals (matching main.cpp)
 volatile KubiMode currentMode            = MODE_CLOCK_IDLE;
@@ -164,10 +165,14 @@ void hardwareSimulationThread() {
                             sim_last_chime_time = now;
                         } else if (currentMode == MODE_CLOCK_IDLE) {
                             clockAnalogView = !clockAnalogView;
+                            Preferences prefs;
+                            prefs.begin("kubi_settings", false);
+                            prefs.putBool("clockAnalog", clockAnalogView);
+                            prefs.end();
                             audio.playChime(CHIME_TAP_FEEDBACK);
                             sim_last_chime_name = "CHIME_TAP_FEEDBACK";
                             sim_last_chime_time = now;
-                            std::cout << "[SIM CLOCK] Shake toggled view -> " << (clockAnalogView ? "analog" : "digital") << std::endl;
+                            std::cout << "[SIM CLOCK] Shake toggled view -> " << (clockAnalogView ? "analog" : "digital") << " (saved to Preferences)" << std::endl;
                         }
                         break;
 
@@ -254,7 +259,12 @@ int main() {
     std::cout << "    KUBI DESKTOP C++ SIMULATOR RUNNER   " << std::endl;
     std::cout << "========================================" << std::endl;
 
-    // 1. Initialize Drivers
+    // 1. Initialize Drivers & Load Settings
+    Preferences prefs;
+    prefs.begin("kubi_settings", false);
+    clockAnalogView = prefs.getBool("clockAnalog", false);
+    prefs.end();
+
     display.init();
     sensors.init();
     audio.init();
@@ -302,6 +312,7 @@ int main() {
 
         doc["pomodoroFocus"] = pomodoro.getFocusMinutes();
         doc["pomodoroBreak"] = pomodoro.getShortBreakMinutes();
+        doc["clockAnalog"] = clockAnalogView;
 
         std::string jsonStr;
         serializeJson(doc, jsonStr);
@@ -360,6 +371,14 @@ int main() {
 
         if (colorChanged) {
             pomodoro.setColors(cWork, cShort, cLong);
+        }
+
+        if (jsonObj["clockAnalog"].is<bool>()) {
+            clockAnalogView = jsonObj["clockAnalog"].as<bool>();
+            Preferences prefs;
+            prefs.begin("kubi_settings", false);
+            prefs.putBool("clockAnalog", clockAnalogView);
+            prefs.end();
         }
 
         res.set_content("{\"status\":\"success\"}", "application/json");
