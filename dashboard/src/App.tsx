@@ -1,14 +1,20 @@
-import {
-  Sun,
-  Moon,
-  Shield,
-  Settings2,
-  Waves,
+﻿import {
   Clock,
+  Timer,
+  Smile,
+  Calendar,
   Activity,
   RefreshCw,
-  MapPin,
-  Globe,
+  Wifi,
+  Battery,
+  Thermometer,
+  BellRing,
+  Play,
+  Pause,
+  SkipForward,
+  RotateCcw,
+  Sliders,
+  Palette,
 } from "lucide-react";
 import { Accordion } from "./components/Accordion";
 import {
@@ -19,1027 +25,583 @@ import {
   QueryClientProvider,
 } from "@tanstack/react-query";
 import { Toaster, toast } from "sonner";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { SkyArc } from "./components/SkyArc";
 import { Link } from "react-router";
 
-// Define the shape of our API payload
-interface LampPayload {
-  [key: string]: number | boolean | string | number[] | undefined;
+// Detailed Pomodoro state
+interface PomodoroState {
+  phase: number;
+  phaseName: string;
+  remaining: number;
+  total: number;
+  isPaused: boolean;
+  hasChimed: boolean;
+  cycle: number;
+  cycleTarget: number;
+  focusMin: number;
+  shortBreakMin: number;
+  longBreakMin: number;
+  colorWork: string;
+  colorShort: string;
+  colorLong: string;
 }
 
-const MODE_MAP = [
-  "Auto Day",
-  "Auto Night",
-  "Manual Day",
-  "Manual Night",
-  "Night Light",
-  "Sunrise",
-  "Sundown",
-  "Proximity",
-  "Away",
+// Shape of Kubi API state
+interface KubiState {
+  mode: number;
+  temp: number;
+  battery: number;
+  icalUrl: string;
+  isNightMode: boolean;
+  planetDawnH: number;
+  planetDawnM: number;
+  planetDuskH: number;
+  planetDuskM: number;
+  alarmHour: number;
+  alarmMinute: number;
+  cfgSundownHour: number;
+  cfgSundownMinute: number;
+  pomodoro: PomodoroState;
+  [key: string]: any;
+}
+
+const DEFAULT_STATE: KubiState = {
+  mode: 0,
+  temp: 22.0,
+  battery: 100,
+  icalUrl: "",
+  isNightMode: false,
+  planetDawnH: 6,
+  planetDawnM: 0,
+  planetDuskH: 18,
+  planetDuskM: 0,
+  alarmHour: 8,
+  alarmMinute: 0,
+  cfgSundownHour: 18,
+  cfgSundownMinute: 0,
+  pomodoro: {
+    phase: 0,
+    phaseName: "FOCUS",
+    remaining: 25 * 60,
+    total: 25 * 60,
+    isPaused: false,
+    hasChimed: false,
+    cycle: 0,
+    cycleTarget: 4,
+    focusMin: 25,
+    shortBreakMin: 5,
+    longBreakMin: 15,
+    colorWork: "#F59E0B",
+    colorShort: "#10B981",
+    colorLong: "#0EA5E9",
+  },
+};
+
+const FACE_MODES = [
+  { id: 0, name: "Face 1: Focus Clock", desc: "Minimal time, next event & ticker", icon: Clock },
+  { id: 1, name: "Face 2: Pomodoro", desc: "Auto focus timer with 8-bit chimes", icon: Timer },
+  { id: 2, name: "Face 3: Mascot & Temp", desc: "Kubi routine & room telemetry", icon: Smile },
+  { id: 3, name: "Face 4: Schedule", desc: "3-day Google Calendar agenda", icon: Calendar },
 ];
 
-// Helper to translate WWA Temp to Text
-const getTempName = (temp: number) => {
-  if (temp === 0) return "Amber";
-  if (temp === 1) return "Warm White";
-  if (temp === 2) return "Cool White";
-  return "Unknown";
-};
+const PRESET_COLORS = [
+  "#F59E0B", // Amber
+  "#10B981", // Emerald
+  "#0EA5E9", // Sky
+  "#F43F5E", // Rose
+  "#8B5CF6", // Violet
+  "#06B6D4", // Cyan
+  "#EAB308", // Yellow
+  "#EC4899", // Pink
+];
 
 const queryClient = new QueryClient();
 
-const DayPicker = ({
-  days,
-  onChange,
-  color,
-}: {
-  days: number[];
-  onChange: (d: number[]) => void;
-  color: "amber" | "sky";
-}) => {
-  // SAFETY NET: If API misses the array, fall back to a valid 7-day array
-  const safeDays =
-    Array.isArray(days) && days.length === 7 ? days : [0, 1, 1, 1, 1, 1, 0];
-
-  const toggleDay = (index: number) => {
-    const newDays = [...safeDays];
-    newDays[index] = (newDays[index] + 1) % 3; // Cycles 0 -> 1 -> 2 -> 0
-    onChange(newDays);
-  };
-
-  const getStyles = (state: number) => {
-    if (state === 0)
-      return "bg-zinc-950 text-zinc-500 border border-zinc-800 hover:text-zinc-400"; // OFF
-    if (state === 1)
-      return `bg-transparent text-${color}-500 border border-dashed border-${color}-500/50`; // AUTO
-    return `bg-${color}-500 text-zinc-950 shadow-[0_0_12px_rgba(var(--${color}-500-rgb),0.4)] border border-${color}-500`; // MANUAL
-  };
-
-  const getStateLabel = (state: number) => {
-    if (state === 0) return "Off";
-    if (state === 1) return "Auto (Planet Sync)";
-    return "Manual (Target Time)";
-  };
-
-  return (
-    <div className="flex justify-between items-center pt-2">
-      {["S", "M", "T", "W", "T", "F", "S"].map((day, index) => (
-        <button
-          key={index}
-          onClick={() => toggleDay(index)}
-          title={getStateLabel(safeDays[index])}
-          className={`w-10 h-10 rounded-full text-sm font-medium transition-all cursor-pointer ${getStyles(days[index])}`}
-        >
-          {day}
-        </button>
-      ))}
-    </div>
-  );
-};
-
-interface ConfigSliderProps {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  onChange: (val: number) => void;
-  onRelease: (val: number) => void;
+function formatTime(totalSecs: number) {
+  const mins = Math.floor(totalSecs / 60);
+  const secs = totalSecs % 60;
+  return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
 }
 
-const ConfigSlider = ({
-  label,
-  value,
-  min,
-  max,
-  onChange,
-  onRelease,
-}: ConfigSliderProps) => (
-  <div className="space-y-2 mt-4">
-    <div className="flex justify-between text-sm">
-      <span className="text-zinc-300">{label}</span>
-      <span className="text-amber-500 font-mono">{value}</span>
-    </div>
-    <input
-      type="range"
-      min={min}
-      max={max}
-      value={value}
-      onChange={(e) => onChange(Number(e.target.value))}
-      onMouseUp={() => onRelease(value)}
-      onTouchEnd={() => onRelease(value)}
-      className="w-full h-2 bg-zinc-950 rounded-lg appearance-none cursor-pointer accent-amber-500"
-    />
-  </div>
-);
-
-function LampDashboard() {
+function KubiDashboard() {
   const qc = useQueryClient();
+  const [icalInput, setIcalInput] = useState("");
 
-  // --- LOCATION SEARCH STATE ---
-  const [citySearch, setCitySearch] = useState("");
-  const [isSearching, setIsSearching] = useState(false);
-
-  // --- HARDWARE DIAGNOSTICS POLLING ---
-  const {
-    data: diagnostics,
-    isFetching: isFetchingDiag,
-    refetch: refetchDiagnostics,
-    isError: isDiagError,
-    error: diagError,
-  } = useQuery({
-    queryKey: ["diagnostics"],
+  // 1. Fetch system state
+  const { data = DEFAULT_STATE, isLoading } = useQuery<KubiState>({
+    queryKey: ["kubiState"],
     queryFn: async () => {
-      const res = await fetch("/api/diagnostics");
-      if (!res.ok) throw new Error("Failed to fetch diagnostics");
-      return res.json();
+      try {
+        const res = await fetch("/api/state");
+        if (!res.ok) return DEFAULT_STATE;
+        const json = await res.json();
+        return {
+          ...DEFAULT_STATE,
+          ...json,
+          pomodoro: {
+            ...DEFAULT_STATE.pomodoro,
+            ...(json.pomodoro || {}),
+          },
+        };
+      } catch {
+        return DEFAULT_STATE;
+      }
     },
-    refetchOnMount: true,
+    refetchInterval: 1000, // 1Hz live polling for smooth timer sync
   });
 
-  // Fire the toast when the error state changes
-  useEffect(() => {
-    if (isDiagError && diagError) {
-      toast.error(`Diagnostics Error`, { description: diagError.message });
-    }
-  }, [isDiagError, diagError]);
-
-  // --- BACKGROUND POLLING ---
-  const {
-    data: state,
-    isLoading,
-    isError: isStateError,
-    error: stateError,
-  } = useQuery({
-    queryKey: ["lampState"],
-    queryFn: async () => {
-      const res = await fetch("/api/state");
-      if (!res.ok) throw new Error("Network response was not ok");
-      return res.json();
-    },
-    refetchInterval: 5000, // Poll every 5 seconds automatically
-    refetchOnMount: true,
-  });
-
-  // Fire the toast when the error state changes
-  useEffect(() => {
-    if (isStateError && stateError) {
-      toast.error(`Lamp State Error`, { description: stateError.message });
-    }
-  }, [isStateError, stateError]);
-
-  // --- THE MUTATION ENGINE (Optimistic Updates) ---
+  // 2. Settings mutation
   const mutation = useMutation({
-    mutationFn: async (payload: LampPayload) => {
+    mutationFn: async (payload: Partial<KubiState> & Record<string, any>) => {
       const res = await fetch("/api/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error("Failed to update ESP32");
+      if (!res.ok) throw new Error("Failed to update settings");
       return res.json();
     },
-    // This runs INSTANTLY when you click a button, before the network request finishes
-    onMutate: async (newSettings) => {
-      // Cancel background refetches so they don't overwrite our optimistic update
-      await qc.cancelQueries({ queryKey: ["lampState"] });
-
-      // Snapshot the previous value in case we need to roll back
-      const previousState = qc.getQueryData(["lampState"]);
-
-      // Optimistically overwrite the cache with the new value
-      qc.setQueryData(["lampState"], (old: any) => ({
-        ...old,
-        ...newSettings,
-      }));
-
-      return { previousState };
-    },
     onSuccess: () => {
-      toast.success("Saved Successfully");
+      qc.invalidateQueries({ queryKey: ["kubiState"] });
+      toast.success("Settings saved to Kubi");
     },
-    // If the ESP32 is offline or crashes, roll the UI back to the snapshot
-    onError: (err, _newSettings, context) => {
-      qc.setQueryData(["lampState"], context?.previousState);
-      console.error("Hardware Sync Failed:", err);
-      toast.error("Hardware Sync Failed", {
-        description: "Sunrise might be offline",
-      });
-    },
-    // Once everything is done, force a fresh pull from the ESP32 just to be certain
-    onSettled: () => {
-      qc.invalidateQueries({ queryKey: ["lampState"] });
+    onError: () => {
+      toast.error("Could not communicate with Kubi");
     },
   });
 
-  // --- MASTER DEFAULT STATE ---
-  const defaultData = {
-    brightness: 150,
-    alarmHour: 7,
-    alarmMinute: 30,
-    mode: 0,
-    temp: 0, // Replaced 'hue' with 'temp' (0=Amber, 1=Warm, 2=Cool)
-    dawnH: 6,
-    dawnM: 0,
-    duskH: 18,
-    duskM: 0,
-    nightLightBright: 128,
-    cfgMaxGlow: 255,
-    cfgTouchThreshold: 35,
-    cfgProxThreshold: 30,
-    cfgAmbientThreshold: 100,
-    isSunriseEnabled: true,
-    isSundownEnabled: true,
-    cfgSundownHour: 18,
-    cfgSundownMinute: 0,
-    cfgModeTimeout: 40,
-    cfgBrightMode: 2, // 0=Var, 1=Step, 2=Hybrid
-    sunriseDuration: 30,
-    sundownDuration: 30,
-    geoLat: -33.9321,
-    geoLon: 18.8602,
-    tzOffset: 2,
-    planetDawnH: 6,
-    planetDawnM: 0,
-    planetDuskH: 18,
-    planetDuskM: 0,
-    cfgProxEnabled: true,
-    sunriseDays: [0, 1, 1, 1, 1, 1, 0],
-    sundownDays: [1, 1, 1, 1, 1, 1, 1],
-  };
+  // 3. Direct Pomodoro actions mutation
+  const pomodoroActionMutation = useMutation({
+    mutationFn: async (action: "play" | "pause" | "toggle" | "skip" | "reset") => {
+      const res = await fetch("/api/pomodoro/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      if (!res.ok) throw new Error("Action failed");
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["kubiState"] });
+    },
+    onError: () => {
+      toast.error("Pomodoro action failed");
+    },
+  });
 
-  // Fallback state while the initial fetch happens
-  const data = state ? { ...defaultData, ...state } : defaultData;
+  const activeFace = FACE_MODES[data.mode] || FACE_MODES[0];
+  const pomo = data.pomodoro || DEFAULT_STATE.pomodoro;
 
-  // --- HANDLERS ---
-  const handleTimeChange = (type: "hour" | "minute", value: string) => {
-    const num = Number(value);
-    if (type === "hour") {
-      mutation.mutate({ alarmHour: num, alarmMinute: data.alarmMinute });
-    } else {
-      mutation.mutate({ alarmHour: data.alarmHour, alarmMinute: num });
-    }
-  };
-
-  const handleCitySearch = async () => {
-    if (!citySearch) return;
-    setIsSearching(true);
-    try {
-      // Free, no-auth forward geocoding API
-      const res = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(citySearch)}&limit=1`,
-      );
-      const geoData = await res.json();
-
-      if (geoData && geoData.length > 0) {
-        const lat = parseFloat(parseFloat(geoData[0].lat).toFixed(4));
-        const lon = parseFloat(parseFloat(geoData[0].lon).toFixed(4));
-
-        mutation.mutate({ geoLat: lat, geoLon: lon });
-        setCitySearch(""); // Clear the input on success
-      } else {
-        alert(
-          "City not found. Try adding the country name (e.g., 'Stellenbosch, South Africa').",
-        );
-      }
-    } catch (error) {
-      console.error("Geocoding failed", error);
-      alert("Failed to search location.");
-    } finally {
-      setIsSearching(false);
-    }
-  };
-
-  const handleSyncTimezone = () => {
-    // Silently grabs the timezone from the phone's browser (e.g., SAST is 2)
-    const localTzOffset = -(new Date().getTimezoneOffset() / 60);
-    mutation.mutate({ tzOffset: localTzOffset });
-  };
-
-  // Smooth UI dragging without spamming the ESP32
-  const handleDrag = (key: string, value: number) => {
-    qc.setQueryData(["lampState"], (old: any) => ({
-      ...old,
-      [key]: value,
-    }));
-  };
-
-  // Only fire the network request when the slider is released
-  const handleRelease = (key: string, value: number) => {
-    mutation.mutate({ [key]: value });
-  };
+  // Resolve current active color for Pomodoro
+  let activePhaseColor = pomo.colorWork || "#F59E0B";
+  if (pomo.phase === 1) activePhaseColor = pomo.colorShort || "#10B981";
+  if (pomo.phase === 2) activePhaseColor = pomo.colorLong || "#0EA5E9";
 
   const accordionItems = [
-    // Sequencing & Durations
+    // POMODORO CONFIGURATION ITEM
     {
       headerContent: (
         <div className="flex items-center gap-3 font-medium text-zinc-100">
-          <Clock size={18} className="text-amber-500" /> Sequencing & Durations
+          <Sliders size={18} className="text-amber-500" /> Pomodoro Configuration
         </div>
       ),
       bodyContent: (
-        <div>
-          <p className="text-sm text-zinc-500 mb-4">
-            Set transition times (in minutes) for the automated fades.
-          </p>
-          <ConfigSlider
-            label="Sunrise Duration (Mins)"
-            value={(data as any)["sunriseDuration"]}
-            onChange={(v) => handleDrag("sunriseDuration", v)}
-            onRelease={(v) => handleRelease("sunriseDuration", v)}
-            min={1}
-            max={120}
-          />
-          <ConfigSlider
-            label="Sundown Duration (Mins)"
-            value={(data as any)["sundownDuration"]}
-            onChange={(v) => handleDrag("sundownDuration", v)}
-            onRelease={(v) => handleRelease("sundownDuration", v)}
-            min={1}
-            max={120}
-          />
-
-          <div className="border-t border-zinc-800/50 mt-6 pt-4">
-            <p className="text-xs text-zinc-500 mb-2 font-semibold tracking-wider uppercase">
-              Failsafe Timeout
-            </p>
-            <p className="text-xs text-zinc-500 mb-4 leading-relaxed">
-              If you leave the house during a sequence, the lamp will
-              automatically drop to Auto Mode after this limit.
-            </p>
-            <ConfigSlider
-              label="Exit Sequence After (Mins)"
-              value={(data as any)["cfgModeTimeout"]}
-              onChange={(v) => handleDrag("cfgModeTimeout", v)}
-              onRelease={(v) => handleRelease("cfgModeTimeout", v)}
-              min={10}
-              max={180}
-            />
-          </div>
-        </div>
-      ),
-    },
-    // Location & Timezone
-    {
-      headerContent: (
-        <div className="flex items-center gap-3 font-medium text-zinc-100">
-          <Globe size={18} className="text-amber-500" /> Location & Timezone
-        </div>
-      ),
-      bodyContent: (
-        <div className="space-y-6">
-          <p className="text-sm text-zinc-500">
-            Sync planetary data to your current city.
+        <div className="space-y-5 text-sm">
+          <p className="text-xs text-zinc-500 leading-relaxed">
+            Customize phase durations, session targets, and the countdown text colors rendered on Kubi's display.
           </p>
 
-          {/* CITY SEARCH BAR */}
-          <div className="space-y-2">
-            <label className="text-xs font-semibold tracking-widest text-zinc-500 uppercase">
-              Search City
-            </label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                placeholder="e.g. Stellenbosch..."
-                value={citySearch}
-                onChange={(e) => setCitySearch(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleCitySearch()}
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-sm text-amber-500 focus:outline-none focus:border-amber-500/50 transition-colors"
-              />
-              <button
-                onClick={handleCitySearch}
-                disabled={isSearching}
-                className="px-4 bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 border border-amber-500/50 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
-              >
-                {isSearching ? "..." : "Find"}
-              </button>
-            </div>
-          </div>
-
-          {/* EDITABLE COORDS & TIMEZONE */}
-          <div className="grid grid-cols-2 gap-4 border-t border-zinc-800/50 pt-4">
-            <div className="space-y-1">
-              <label className="text-xs text-zinc-400">Latitude</label>
-              <input
-                type="number"
-                step="0.0001"
-                value={data.geoLat}
-                onChange={(e) =>
-                  handleDrag("geoLat", parseFloat(e.target.value) || 0)
-                }
-                onBlur={() => handleRelease("geoLat", data.geoLat)}
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2 text-sm text-amber-500 focus:outline-none focus:border-amber-500/50"
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs text-zinc-400">Longitude</label>
-              <input
-                type="number"
-                step="0.0001"
-                value={data.geoLon}
-                onChange={(e) =>
-                  handleDrag("geoLon", parseFloat(e.target.value) || 0)
-                }
-                onBlur={() => handleRelease("geoLon", data.geoLon)}
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2 text-sm text-amber-500 focus:outline-none focus:border-amber-500/50"
-              />
-            </div>
-            <div className="col-span-2 space-y-1 pt-2">
-              <div className="flex justify-between items-center pb-1">
-                <label className="text-xs text-zinc-400">
-                  UTC Offset (Hours)
-                </label>
-                <button
-                  onClick={handleSyncTimezone}
-                  className="flex items-center gap-1.5 px-2 py-1 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-[10px] uppercase tracking-wider rounded-md transition-colors"
-                >
-                  <MapPin size={12} className="text-amber-500" />
-                  Sync Phone
-                </button>
+          {/* DURATION SLIDERS */}
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <div className="flex justify-between text-xs">
+                <span className="text-zinc-300 font-medium">Work / Focus Duration</span>
+                <span className="font-mono text-amber-500">{pomo.focusMin} mins</span>
               </div>
               <input
-                type="number"
-                step="1"
-                value={data.tzOffset}
-                onChange={(e) =>
-                  handleDrag("tzOffset", parseInt(e.target.value) || 0)
-                }
-                onBlur={() => handleRelease("tzOffset", data.tzOffset)}
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2 text-sm text-amber-500 focus:outline-none focus:border-amber-500/50"
+                type="range"
+                min="1"
+                max="90"
+                value={pomo.focusMin}
+                onChange={(e) => mutation.mutate({ focusMin: Number(e.target.value) })}
+                className="w-full h-2 bg-zinc-950 rounded-lg appearance-none cursor-pointer accent-amber-500"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex justify-between text-xs">
+                <span className="text-zinc-300 font-medium">Short Break Duration</span>
+                <span className="font-mono text-emerald-400">{pomo.shortBreakMin} mins</span>
+              </div>
+              <input
+                type="range"
+                min="1"
+                max="30"
+                value={pomo.shortBreakMin}
+                onChange={(e) => mutation.mutate({ shortBreakMin: Number(e.target.value) })}
+                className="w-full h-2 bg-zinc-950 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex justify-between text-xs">
+                <span className="text-zinc-300 font-medium">Long Break Duration</span>
+                <span className="font-mono text-sky-400">{pomo.longBreakMin} mins</span>
+              </div>
+              <input
+                type="range"
+                min="5"
+                max="60"
+                value={pomo.longBreakMin}
+                onChange={(e) => mutation.mutate({ longBreakMin: Number(e.target.value) })}
+                className="w-full h-2 bg-zinc-950 rounded-lg appearance-none cursor-pointer accent-sky-500"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex justify-between text-xs">
+                <span className="text-zinc-300 font-medium">Sessions Before Long Break</span>
+                <span className="font-mono text-zinc-300">{pomo.cycleTarget} sessions</span>
+              </div>
+              <input
+                type="range"
+                min="2"
+                max="8"
+                value={pomo.cycleTarget}
+                onChange={(e) => mutation.mutate({ cycleTarget: Number(e.target.value) })}
+                className="w-full h-2 bg-zinc-950 rounded-lg appearance-none cursor-pointer accent-zinc-400"
               />
             </div>
           </div>
-        </div>
-      ),
-    },
-    // Light Output Limits
-    {
-      headerContent: (
-        <div className="flex items-center gap-3 font-medium text-zinc-100">
-          <Settings2 size={18} className="text-amber-500" /> Light Output Limits
-        </div>
-      ),
-      bodyContent: (
-        <div>
-          <p className="text-sm text-zinc-500 mb-4">
-            Set the absolute maximum hardware bounds for automated states.
-          </p>
-          <ConfigSlider
-            label="Night Light Brightness (Default)"
-            value={(data as any)["nightLightBright"]}
-            onChange={(v) => handleDrag("nightLightBright", v)}
-            onRelease={(v) => handleRelease("nightLightBright", v)}
-            min={13}
-            max={255}
-          />
-          <ConfigSlider
-            label="Proximity Glow Output"
-            value={(data as any)["cfgMaxGlow"]}
-            onChange={(v) => handleDrag("cfgMaxGlow", v)}
-            onRelease={(v) => handleRelease("cfgMaxGlow", v)}
-            min={50}
-            max={255}
-          />
-          <div className="border-t border-zinc-800/50 mt-6 pt-4">
-            <p className="text-xs text-zinc-500 mb-2 font-semibold tracking-wider uppercase">
-              Intensity Button Behavior
-            </p>
-            <p className="text-xs text-zinc-500 mb-4 leading-relaxed">
-              Customize how the physical brightness button reacts to taps and
-              holds. Minimum hardware brightness is hard-locked to 5%.
-            </p>
-            <div className="grid grid-cols-3 gap-2">
-              {[
-                { label: "Variable", val: 0, desc: "Hold only" },
-                { label: "Stepped", val: 1, desc: "8 Levels" },
-                { label: "Hybrid", val: 2, desc: "Default" },
-              ].map((mode) => (
-                <button
-                  key={mode.val}
-                  onClick={() => mutation.mutate({ cfgBrightMode: mode.val })}
-                  className={`p-2 flex flex-col items-center justify-center rounded-xl transition-colors border ${
-                    data.cfgBrightMode === mode.val
-                      ? "bg-amber-500/10 border-amber-500/50 text-amber-500"
-                      : "bg-zinc-950 border-zinc-800 text-zinc-500 hover:text-zinc-300"
-                  }`}
-                >
-                  <span className="text-sm font-medium">{mode.label}</span>
-                  <span className="text-[10px] opacity-70">{mode.desc}</span>
-                </button>
-              ))}
+
+          {/* COLOR PICKERS */}
+          <div className="pt-4 border-t border-zinc-800/80 space-y-3">
+            <div className="flex items-center gap-2 mb-1">
+              <Palette size={14} className="text-amber-500" />
+              <span className="text-xs font-semibold text-zinc-300 uppercase tracking-wider">
+                Display Text Colors
+              </span>
+            </div>
+
+            {/* Work Color */}
+            <div className="space-y-1.5">
+              <div className="flex justify-between text-xs items-center">
+                <span className="text-zinc-400">Work Mode Text</span>
+                <span className="w-3.5 h-3.5 rounded-full border border-zinc-700" style={{ backgroundColor: pomo.colorWork }} />
+              </div>
+              <div className="flex gap-2">
+                {PRESET_COLORS.map((col) => (
+                  <button
+                    key={col}
+                    onClick={() => mutation.mutate({ colorWork: col })}
+                    className={`w-6 h-6 rounded-full border cursor-pointer transition-transform hover:scale-110 ${
+                      pomo.colorWork === col ? "border-white ring-2 ring-white/40 scale-105" : "border-transparent"
+                    }`}
+                    style={{ backgroundColor: col }}
+                  />
+                ))}
+              </div>
+            </div>
+
+            {/* Short Break Color */}
+            <div className="space-y-1.5 pt-1">
+              <div className="flex justify-between text-xs items-center">
+                <span className="text-zinc-400">Short Break Text</span>
+                <span className="w-3.5 h-3.5 rounded-full border border-zinc-700" style={{ backgroundColor: pomo.colorShort }} />
+              </div>
+              <div className="flex gap-2">
+                {PRESET_COLORS.map((col) => (
+                  <button
+                    key={col}
+                    onClick={() => mutation.mutate({ colorShort: col })}
+                    className={`w-6 h-6 rounded-full border cursor-pointer transition-transform hover:scale-110 ${
+                      pomo.colorShort === col ? "border-white ring-2 ring-white/40 scale-105" : "border-transparent"
+                    }`}
+                    style={{ backgroundColor: col }}
+                  />
+                ))}
+              </div>
+            </div>
+
+            {/* Long Break Color */}
+            <div className="space-y-1.5 pt-1">
+              <div className="flex justify-between text-xs items-center">
+                <span className="text-zinc-400">Long Break Text</span>
+                <span className="w-3.5 h-3.5 rounded-full border border-zinc-700" style={{ backgroundColor: pomo.colorLong }} />
+              </div>
+              <div className="flex gap-2">
+                {PRESET_COLORS.map((col) => (
+                  <button
+                    key={col}
+                    onClick={() => mutation.mutate({ colorLong: col })}
+                    className={`w-6 h-6 rounded-full border cursor-pointer transition-transform hover:scale-110 ${
+                      pomo.colorLong === col ? "border-white ring-2 ring-white/40 scale-105" : "border-transparent"
+                    }`}
+                    style={{ backgroundColor: col }}
+                  />
+                ))}
+              </div>
             </div>
           </div>
         </div>
       ),
     },
-    // Sensor Calibration
+    // HARDWARE & TELEMETRY ITEM
     {
       headerContent: (
         <div className="flex items-center gap-3 font-medium text-zinc-100">
-          <Waves size={18} className="text-amber-500" /> Sensor Calibration
-        </div>
-      ),
-      bodyContent: (
-        <div>
-          <p className="text-sm text-zinc-500 mb-4">
-            Fine-tune the analog sensors to the Avodire wood density and room
-            location.
-          </p>
-          <ConfigSlider
-            label="Touch Sensitivity Threshold"
-            value={(data as any)["cfgTouchThreshold"]}
-            onChange={(v) => handleDrag("cfgTouchThreshold", v)}
-            onRelease={(v) => handleRelease("cfgTouchThreshold", v)}
-            min={10}
-            max={200}
-          />
-          <ConfigSlider
-            label="Proximity Sensitivity Threshold"
-            value={(data as any)["cfgProxThreshold"]}
-            onChange={(v) => handleDrag("cfgProxThreshold", v)}
-            onRelease={(v) => handleRelease("cfgProxThreshold", v)}
-            min={10}
-            max={200}
-          />
-          <ConfigSlider
-            label="Ambient Darkness Trigger"
-            value={(data as any)["cfgAmbientThreshold"]}
-            onChange={(v) => handleDrag("cfgAmbientThreshold", v)}
-            onRelease={(v) => handleRelease("cfgAmbientThreshold", v)}
-            min={10}
-            max={1000}
-          />
-          <div className="flex justify-between items-center mt-6 pt-4 border-t border-zinc-800/50">
-            <div>
-              <p className="text-sm text-zinc-300 font-medium">
-                Proximity Sensing
-              </p>
-              <p className="text-xs text-zinc-500 mt-0.5">
-                Hand-hover glow when lamp is in Auto mode
-              </p>
-            </div>
-            <button
-              onClick={() =>
-                mutation.mutate({
-                  cfgProxEnabled: !(data as any).cfgProxEnabled,
-                })
-              }
-              className={`w-12 h-6 rounded-full transition-colors relative shrink-0 ${
-                (data as any).cfgProxEnabled ? "bg-amber-500" : "bg-zinc-800"
-              }`}
-            >
-              <div
-                className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${
-                  (data as any).cfgProxEnabled
-                    ? "translate-x-7"
-                    : "translate-x-1"
-                }`}
-              />
-            </button>
-          </div>
-        </div>
-      ),
-    },
-    // Hardware & Diagnostics
-    {
-      headerContent: (
-        <div className="flex items-center gap-3 font-medium text-zinc-100">
-          <Activity size={18} className="text-amber-500" /> Hardware Diagnostics
+          <Activity size={18} className="text-amber-500" /> Hardware & Telemetry
         </div>
       ),
       bodyContent: (
         <div className="space-y-4">
-          <div className="flex justify-between items-center mb-4">
-            <p className="text-sm text-zinc-500">Live telemetry from Core 0</p>
+          <div className="flex justify-between items-center mb-2">
+            <p className="text-xs text-zinc-500">Live telemetry from Core 0 / Core 1</p>
             <button
-              onClick={() => refetchDiagnostics()}
-              className="flex items-center gap-2 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs rounded-lg transition-colors"
+              onClick={() => qc.invalidateQueries({ queryKey: ["kubiState"] })}
+              className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs rounded-lg transition-colors cursor-pointer"
             >
-              <RefreshCw
-                size={14}
-                className={isFetchingDiag ? "animate-spin" : ""}
-              />
+              <RefreshCw size={12} />
               Resync
             </button>
           </div>
-
-          {diagnostics ? (
-            <div className="grid grid-cols-2 gap-3 text-sm">
-              <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800/50">
-                <span className="text-zinc-500 text-xs block mb-1">
-                  PROXIMITY (GPIO 4)
-                </span>
-                <span className="font-mono text-amber-500">
-                  {diagnostics.prox}
-                </span>
-              </div>
-              <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800/50">
-                <span className="text-zinc-500 text-xs block mb-1">
-                  AMBIENT LUX
-                </span>
-                <span className="font-mono text-amber-500">
-                  {diagnostics.ambient}
-                </span>
-              </div>
-              <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800/50">
-                <span className="text-zinc-500 text-xs block mb-1">
-                  BTN: BRIGHT (GPIO 15)
-                </span>
-                <span className="font-mono text-zinc-300">
-                  {diagnostics.b1}
-                </span>
-              </div>
-              <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800/50">
-                <span className="text-zinc-500 text-xs block mb-1">
-                  BTN: TEMP (GPIO 14)
-                </span>
-                <span className="font-mono text-zinc-300">
-                  {diagnostics.b2}
-                </span>
-              </div>
-              <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800/50">
-                <span className="text-zinc-500 text-xs block mb-1">
-                  BTN: MODE (GPIO 27)
-                </span>
-                <span className="font-mono text-zinc-300">
-                  {diagnostics.b3}
-                </span>
-              </div>
-              <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800/50">
-                <span className="text-zinc-500 text-xs block mb-1">
-                  RAW FSM ID
-                </span>
-                <span className="font-mono text-zinc-300">
-                  {diagnostics.stateCode} ({MODE_MAP[diagnostics.stateCode]})
-                </span>
-              </div>
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800/50">
+              <span className="text-zinc-500 text-xs block mb-1 flex items-center gap-1">
+                <Thermometer size={12} className="text-amber-500" /> ROOM TEMP
+              </span>
+              <span className="font-mono text-amber-500">{data.temp.toFixed(1)} °C</span>
             </div>
-          ) : (
-            <div className="text-center py-6 text-zinc-600 text-sm border border-dashed border-zinc-800 rounded-xl">
-              Awaiting telemetry sync...
+            <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800/50">
+              <span className="text-zinc-500 text-xs block mb-1 flex items-center gap-1">
+                <Battery size={12} className="text-amber-500" /> BATTERY
+              </span>
+              <span className="font-mono text-zinc-300">{data.battery}%</span>
             </div>
-          )}
+            <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800/50">
+              <span className="text-zinc-500 text-xs block mb-1 flex items-center gap-1">
+                <Wifi size={12} className="text-amber-500" /> NETWORK
+              </span>
+              <span className="font-mono text-zinc-300">kubi.local</span>
+            </div>
+            <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800/50">
+              <span className="text-zinc-500 text-xs block mb-1 flex items-center gap-1">
+                <BellRing size={12} className="text-amber-500" /> ALERTS API
+              </span>
+              <span className="font-mono text-zinc-300">/api/override</span>
+            </div>
+          </div>
         </div>
       ),
     },
   ];
 
-  if (isLoading)
+  if (isLoading) {
     return (
       <div className="min-h-screen bg-zinc-950 text-amber-500 flex items-center justify-center tracking-widest uppercase text-sm">
-        Initializing System...
+        Connecting to Kubi...
       </div>
     );
+  }
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 p-6 pb-24 font-montserrat">
       <div className="max-w-md mx-auto space-y-6">
-        {/* SKY ARC */}
+        {/* SKY ARC COMPONENT */}
         <SkyArc data={data} />
 
         {/* HEADER */}
-        <header className="space-y-1 mb-8 mt-4">
-          {/* Which name is cooler? */}
-          <h1 className="text-4xl font-medium tracking-[0.3em]! text-center">
-            SUNRISE
+        <header className="space-y-1 mb-6 mt-4 text-center">
+          <h1 className="text-4xl font-medium tracking-[0.3em] text-center">
+            KUBI
           </h1>
-          {/* <h1 className="text-3xl font-medium tracking-[0.3em]!">SOLARIS</h1> */}
           <p className="text-zinc-500 text-sm tracking-wide text-center">
-            Smart Ambient Lighting
+            Desk Companion
           </p>
         </header>
 
-        {/* SYSTEM STATUS CARD */}
-        <div className="grid grid-cols-2 gap-4 relative mb-8">
-          <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 shadow-xl relative flex flex-col justify-center items-center overflow-hidden">
-            <Sun
-              className="text-amber-500/40 absolute -top-8 -left-8"
-              size={100}
+        {/* ================================================================= */}
+        {/* DYNAMIC CONTEXTUAL SECTION (RESPONDS TO ACTIVE STATE OF CUBE)   */}
+        {/* ================================================================= */}
+        {data.mode === 1 ? (
+          // --- POMODORO CONTEXTUAL HERO ---
+          <section className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl relative overflow-hidden transition-all">
+            {/* Ambient Background Glow matching active phase color */}
+            <div
+              className="absolute -top-12 -right-12 w-40 h-40 rounded-full blur-3xl opacity-25 pointer-events-none transition-all duration-500"
+              style={{ backgroundColor: activePhaseColor }}
             />
-            <div className="z-10">
-              <p className="text-zinc-300 text-center text-xs font-semibold tracking-wider mb-1">
-                SUNRISE
-              </p>
-              <p className="text-3xl font-light tabular-nums">
-                {String(data.dawnH).padStart(2, "0")}:
-                {String(data.dawnM).padStart(2, "0")}
-              </p>
-            </div>
-          </div>
-          <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 shadow-xl relative flex flex-col justify-center items-center overflow-hidden">
-            <Moon
-              className="absolute -top-5 -left-7 text-sky-400/40"
-              size={100}
-            />
-            <div className="z-10">
-              <p className="text-zinc-300 text-center text-xs font-semibold tracking-wider mb-1">
-                SUNDOWN
-              </p>
-              <p className="text-3xl font-light tabular-nums">
-                {String(data.duskH).padStart(2, "0")}:
-                {String(data.duskM).padStart(2, "0")}
-              </p>
-            </div>
-          </div>
-          {data.dawnH === data.alarmHour && data.dawnM === data.alarmMinute && (
-            <p className="text-zinc-600 text-xs absolute -bottom-5 left-1">
-              Note: Planetary sunrise overwritten by user alarm
-            </p>
-          )}
-        </div>
 
-        {/* MODE CONTROLS */}
-        <section className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-xl">
-          <div className="flex justify-between items-center mb-6">
-            <div className="text-left">
-              <p className="text-zinc-500 text-xs font-semibold tracking-wider mb-1">
-                ACTIVE STATE
+            <div className="flex justify-between items-center mb-2">
+              <div className="flex items-center gap-2">
+                <span
+                  className="w-2.5 h-2.5 rounded-full animate-pulse"
+                  style={{ backgroundColor: activePhaseColor }}
+                />
+                <span
+                  className="text-xs font-bold tracking-widest uppercase"
+                  style={{ color: activePhaseColor }}
+                >
+                  {pomo.phaseName}
+                </span>
+              </div>
+              <span className="text-xs font-medium text-zinc-400 bg-zinc-950 px-2.5 py-1 rounded-full border border-zinc-800">
+                Session {pomo.cycle + 1} of {pomo.cycleTarget}
+              </span>
+            </div>
+
+            {/* Countdown */}
+            <div className="text-center py-4">
+              <div
+                className="text-6xl font-light tabular-nums tracking-tight font-mono transition-colors"
+                style={{ color: activePhaseColor }}
+              >
+                {formatTime(pomo.remaining)}
+              </div>
+              <p className="text-xs text-zinc-500 mt-2 font-medium tracking-wide">
+                {pomo.isPaused ? "PAUSED (TAP CUBE TO RESUME)" : "TICKING ON KUBI SCREEN"}
               </p>
-              <h2 className="text-xl font-medium text-amber-500">
-                {MODE_MAP[data.mode]}
+            </div>
+
+            {/* Progress Bar */}
+            <div className="w-full bg-zinc-950 h-2 rounded-full overflow-hidden mb-6 border border-zinc-800">
+              <div
+                className="h-full rounded-full transition-all duration-300"
+                style={{
+                  width: `${Math.min(100, Math.max(0, ((pomo.total - pomo.remaining) / (pomo.total || 1)) * 100))}%`,
+                  backgroundColor: activePhaseColor,
+                }}
+              />
+            </div>
+
+            {/* Action Buttons: Play/Pause, Skip, Reset */}
+            <div className="grid grid-cols-3 gap-2.5">
+              <button
+                onClick={() => pomodoroActionMutation.mutate(pomo.isPaused ? "play" : "pause")}
+                className="py-2.5 flex items-center justify-center gap-1.5 rounded-xl text-xs font-medium bg-zinc-950 hover:bg-zinc-800 text-zinc-200 transition-colors cursor-pointer border border-zinc-800"
+              >
+                {pomo.isPaused ? <Play size={14} className="fill-current text-amber-500" /> : <Pause size={14} className="text-amber-500" />}
+                {pomo.isPaused ? "Resume" : "Pause"}
+              </button>
+              <button
+                onClick={() => pomodoroActionMutation.mutate("skip")}
+                className="py-2.5 flex items-center justify-center gap-1.5 rounded-xl text-xs font-medium bg-zinc-950 hover:bg-zinc-800 text-zinc-200 transition-colors cursor-pointer border border-zinc-800"
+              >
+                <SkipForward size={14} className="text-sky-400" />
+                Skip
+              </button>
+              <button
+                onClick={() => pomodoroActionMutation.mutate("reset")}
+                className="py-2.5 flex items-center justify-center gap-1.5 rounded-xl text-xs font-medium bg-zinc-950 hover:bg-zinc-800 text-zinc-200 transition-colors cursor-pointer border border-zinc-800"
+              >
+                <RotateCcw size={14} className="text-zinc-400" />
+                Reset
+              </button>
+            </div>
+          </section>
+        ) : (
+          // --- NON-POMODORO CONTEXTUAL CARD ---
+          <section className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 shadow-xl flex items-center justify-between">
+            <div className="flex items-center gap-3.5">
+              <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl text-amber-500">
+                <activeFace.icon size={22} />
+              </div>
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+                  Current Face Orientation
+                </p>
+                <h2 className="text-base font-medium text-zinc-100">{activeFace.name}</h2>
+              </div>
+            </div>
+            <button
+              onClick={() => mutation.mutate({ mode: 1 })}
+              className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-amber-500 border border-amber-500/30 rounded-xl text-xs font-medium transition-colors cursor-pointer"
+            >
+              Start Pomodoro
+            </button>
+          </section>
+        )}
+
+        {/* 1. OPERATING MODE SELECTOR (MANUAL OVERRIDE) */}
+        <section className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-xl space-y-4">
+          <div className="flex justify-between items-center">
+            <div>
+              <p className="text-zinc-500 text-xs font-semibold tracking-wider mb-1">
+                ORIENTATION FACES
+              </p>
+              <h2 className="text-lg font-medium text-zinc-200">
+                Cube Modes
               </h2>
             </div>
-            <Shield
-              className={data.mode === 8 ? "text-red-500" : "text-zinc-700"}
+            <span className="px-2.5 py-1 text-xs font-medium rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/30">
+              Face {data.mode + 1}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2.5 pt-2">
+            {FACE_MODES.map((mode) => {
+              const Icon = mode.icon;
+              const isActive = data.mode === mode.id;
+              return (
+                <button
+                  key={mode.id}
+                  onClick={() => mutation.mutate({ mode: mode.id })}
+                  className={`p-3 text-left rounded-2xl transition-all border cursor-pointer ${
+                    isActive
+                      ? "bg-amber-500/10 border-amber-500/50 text-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.15)]"
+                      : "bg-zinc-950/60 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700"
+                  }`}
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <Icon size={16} />
+                    <span className="text-xs font-semibold">{mode.name.split(":")[1] || mode.name}</span>
+                  </div>
+                  <p className="text-[11px] text-zinc-500 leading-tight line-clamp-1">{mode.desc}</p>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        {/* 2. GOOGLE CALENDAR ICAL SYNC */}
+        <section className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-xl space-y-4">
+          <div className="flex items-center gap-2 mb-1">
+            <Calendar size={18} className="text-amber-500" />
+            <h2 className="text-lg font-medium text-zinc-100">Google Calendar Sync</h2>
+          </div>
+          <p className="text-zinc-500 text-xs leading-relaxed">
+            Paste your private iCal (.ics) link from Google Calendar settings. Kubi syncs upcoming events every hour.
+          </p>
+          <div className="space-y-2">
+            <input
+              type="text"
+              placeholder="https://calendar.google.com/calendar/ical/.../basic.ics"
+              value={icalInput || data.icalUrl}
+              onChange={(e) => setIcalInput(e.target.value)}
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-xs text-zinc-200 placeholder-zinc-700 focus:outline-none focus:border-amber-500/50"
             />
-          </div>
-          <div className="grid grid-cols-3 gap-3">
             <button
-              onClick={() => mutation.mutate({ mode: 0 })}
-              className={`py-3 cursor-pointer rounded-xl text-sm transition-colors border ${data.mode === 0 || data.mode === 1 ? "bg-amber-500/10 border-amber-500/50 text-amber-500" : "bg-zinc-950 border-zinc-800 text-zinc-400"}`}
+              onClick={() => {
+                mutation.mutate({ icalUrl: icalInput });
+                toast.success("Calendar URL saved");
+              }}
+              className="w-full py-2.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 border border-amber-500/30 rounded-xl text-xs font-medium transition-colors cursor-pointer"
             >
-              Auto
-            </button>
-            <button
-              onClick={() => mutation.mutate({ mode: 2 })}
-              className={`py-3 cursor-pointer rounded-xl text-sm transition-colors border ${data.mode === 2 || data.mode === 3 ? "bg-amber-500/10 border-amber-500/50 text-amber-500" : "bg-zinc-950 border-zinc-800 text-zinc-400"}`}
-            >
-              Manual
-            </button>
-            <button
-              onClick={() => mutation.mutate({ mode: 8 })}
-              className={`py-3 cursor-pointer rounded-xl text-sm transition-colors border ${data.mode === 8 ? "bg-red-500/10 border-red-500/50 text-red-500" : "bg-zinc-950 border-zinc-800 text-zinc-400"}`}
-            >
-              Away
+              Save &amp; Sync Calendar
             </button>
           </div>
         </section>
 
-        {/* AUTOMATION CONFIG CARD */}
-        <section className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-xl space-y-6">
-          {/* ======================= */}
-          {/* SUNRISE ENGINE       */}
-          {/* ======================= */}
-          <div className="space-y-5">
-            <div className="flex justify-between items-start">
-              <div>
-                <div className="flex items-center gap-2 mb-1">
-                  <Clock
-                    size={18}
-                    className={
-                      data.isSunriseEnabled ? "text-amber-500" : "text-zinc-600"
-                    }
-                  />
-                  <h2
-                    className={`text-lg font-medium ${data.isSunriseEnabled ? "text-zinc-100" : "text-zinc-600"}`}
-                  >
-                    Sunrise Engine
-                  </h2>
-                </div>
-                <p className="text-zinc-500 text-sm">
-                  Automated dawn transitions
-                </p>
-              </div>
-              <button
-                onClick={() =>
-                  mutation.mutate({
-                    isSunriseEnabled: !data.isSunriseEnabled,
-                  })
-                }
-                className={`w-12 h-6 rounded-full transition-colors relative ${data.isSunriseEnabled ? "bg-amber-500" : "bg-zinc-800"}`}
-              >
-                <div
-                  className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${data.isSunriseEnabled ? "translate-x-7" : "translate-x-1"}`}
-                />
-              </button>
-            </div>
-
-            <div
-              className={`space-y-5 transition-opacity duration-300 ${data.isSunriseEnabled ? "opacity-100" : "opacity-30 pointer-events-none"}`}
-            >
-              <div className="flex justify-between items-center">
-                <span className="text-sm font-medium text-zinc-400">
-                  Target Time (Manual)
-                </span>
-                <div className="flex gap-1 text-xl font-light tabular-nums bg-zinc-950 p-2 rounded-xl border border-zinc-800 focus-within:border-amber-500/50 transition-colors">
-                  <input
-                    type="number"
-                    min="0"
-                    max="23"
-                    value={String(data.alarmHour).padStart(2, "0")}
-                    onChange={(e) => handleTimeChange("hour", e.target.value)}
-                    className="bg-transparent text-center w-12 outline-none focus:text-amber-500"
-                  />
-                  <span className="text-zinc-600">:</span>
-                  <input
-                    type="number"
-                    min="0"
-                    max="59"
-                    value={String(data.alarmMinute).padStart(2, "0")}
-                    onChange={(e) => handleTimeChange("minute", e.target.value)}
-                    className="bg-transparent text-center w-12 outline-none focus:text-amber-500"
-                  />
-                </div>
-              </div>
-              <DayPicker
-                days={data.sunriseDays}
-                onChange={(newDays) =>
-                  mutation.mutate({ sunriseDays: newDays })
-                }
-                color="amber"
-              />
-            </div>
-          </div>
-
-          <div className="border-t border-zinc-800/50"></div>
-
-          {/* ======================= */}
-          {/* SUNDOWN ENGINE       */}
-          {/* ======================= */}
-          <div className="space-y-5">
-            <div className="flex justify-between items-start">
-              <div>
-                <div className="flex items-center gap-2 mb-1">
-                  <Moon
-                    size={18}
-                    className={
-                      data.isSundownEnabled ? "text-sky-500" : "text-zinc-600"
-                    }
-                  />
-                  <h2
-                    className={`text-lg font-medium ${data.isSundownEnabled ? "text-zinc-100" : "text-zinc-600"}`}
-                  >
-                    Sundown Engine
-                  </h2>
-                </div>
-                <p className="text-zinc-500 text-sm">
-                  Automated dusk sequences
-                </p>
-              </div>
-              <button
-                onClick={() =>
-                  mutation.mutate({
-                    isSundownEnabled: !data.isSundownEnabled,
-                  })
-                }
-                className={`w-12 h-6 rounded-full transition-colors relative ${data.isSundownEnabled ? "bg-sky-500" : "bg-zinc-800"}`}
-              >
-                <div
-                  className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${data.isSundownEnabled ? "translate-x-7" : "translate-x-1"}`}
-                />
-              </button>
-            </div>
-
-            <div
-              className={`space-y-5 transition-opacity duration-300 ${data.isSundownEnabled ? "opacity-100" : "opacity-30 pointer-events-none"}`}
-            >
-              <div className="flex justify-between items-center">
-                <span className="text-sm font-medium text-zinc-400">
-                  Target Time (Manual)
-                </span>
-                <div className="flex gap-1 text-xl font-light tabular-nums bg-zinc-950 p-2 rounded-xl border border-zinc-800 focus-within:border-sky-500/50 transition-colors">
-                  <input
-                    type="number"
-                    min="0"
-                    max="23"
-                    value={String(data.cfgSundownHour).padStart(2, "0")}
-                    onChange={(e) =>
-                      mutation.mutate({
-                        cfgSundownHour: Number(e.target.value),
-                        cfgSundownMinute: data.cfgSundownMinute,
-                      })
-                    }
-                    className="bg-transparent text-center w-12 outline-none focus:text-sky-500"
-                  />
-                  <span className="text-zinc-600">:</span>
-                  <input
-                    type="number"
-                    min="0"
-                    max="59"
-                    value={String(data.cfgSundownMinute).padStart(2, "0")}
-                    onChange={(e) =>
-                      mutation.mutate({
-                        cfgSundownHour: data.cfgSundownHour,
-                        cfgSundownMinute: Number(e.target.value),
-                      })
-                    }
-                    className="bg-transparent text-center w-12 outline-none focus:text-sky-500"
-                  />
-                </div>
-              </div>
-              <DayPicker
-                days={data.sundownDays}
-                onChange={(newDays) =>
-                  mutation.mutate({ sundownDays: newDays })
-                }
-                color="sky"
-              />
-            </div>
-          </div>
-        </section>
-
-        {/* MASTER CONTROL CARD */}
-        <section className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-xl">
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="text-lg font-medium">Master Output</h2>
-            <div className="flex items-center gap-3">
-              <span className="text-xs font-semibold tracking-widest text-zinc-500 uppercase px-2 py-1 bg-zinc-950 rounded-md border border-zinc-800">
-                {getTempName(data.temp)}
-              </span>
-              <div className="h-3 w-3 rounded-full bg-amber-500 shadow-[0_0_12px_rgba(245,158,11,0.6)]"></div>
-            </div>
-          </div>
-
-          <div className="space-y-6">
-            {/* INTENSITY SLIDER */}
-            <div className="space-y-3">
-              <label className="text-sm text-zinc-400 flex justify-between">
-                <span>
-                  {data.mode === 4 ? "Night Light Brightness" : "Intensity"}
-                </span>
-                <span>
-                  {Math.round(
-                    ((data.mode === 4
-                      ? data.nightLightBright
-                      : data.brightness) /
-                      255) *
-                      100,
-                  )}
-                  %
-                </span>
-              </label>
-              <input
-                type="range"
-                min="13"
-                max={data.mode === 4 ? 255 : 255}
-                value={
-                  data.mode === 4 ? data.nightLightBright : data.brightness
-                }
-                onChange={(e) =>
-                  data.mode === 4
-                    ? handleDrag("nightLightBright", Number(e.target.value))
-                    : handleDrag("brightness", Number(e.target.value))
-                }
-                onMouseUp={() =>
-                  data.mode === 4
-                    ? handleRelease("nightLightBright", data.nightLightBright)
-                    : handleRelease("brightness", data.brightness)
-                }
-                onTouchEnd={() =>
-                  data.mode === 4
-                    ? handleRelease("nightLightBright", data.nightLightBright)
-                    : handleRelease("brightness", data.brightness)
-                }
-                className="w-full h-2 bg-zinc-950 rounded-lg appearance-none cursor-pointer accent-amber-500"
-              />
-            </div>
-
-            {/* NEW: TEMPERATURE SELECTOR */}
-            <div className="space-y-3 pt-2">
-              <label className="text-sm text-zinc-400">Color Temperature</label>
-              <div className="grid grid-cols-3 gap-2">
-                {[
-                  { label: "Amber", val: 0 },
-                  { label: "Warm White", val: 1 },
-                  { label: "Cool White", val: 2 },
-                ].map((t) => (
-                  <button
-                    key={t.val}
-                    onClick={() => mutation.mutate({ temp: t.val })}
-                    className={`py-2 text-xs rounded-lg transition-colors border ${
-                      data.temp === t.val
-                        ? "bg-amber-500/10 border-amber-500/50 text-amber-500"
-                        : "bg-zinc-950 border-zinc-800 text-zinc-500 hover:text-zinc-300"
-                    }`}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* ADVANCED CONFIG ACCORDION */}
-        <div className="pt-4">
+        {/* 3. ACCORDION (POMODORO SETTINGS + HARDWARE TELEMETRY) */}
+        <div className="pt-2">
           <Accordion items={accordionItems} />
         </div>
 
-        {/* MANUAL LINK */}
-        <div className="pt-20 flex items-center justify-center">
-          <Link to="/manual" className="text-zinc-400 underline tracking-wider">
-            Manual
+        {/* 4. MANUAL LINK */}
+        <div className="pt-12 flex items-center justify-center">
+          <Link to="/manual" className="text-zinc-400 hover:text-amber-500 text-xs underline tracking-widest uppercase transition-colors">
+            Kubi User Manual &amp; Gestures Guide
           </Link>
         </div>
       </div>
@@ -1050,7 +612,7 @@ function LampDashboard() {
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <LampDashboard />
+      <KubiDashboard />
       <Toaster position="bottom-center" richColors closeButton />
     </QueryClientProvider>
   );

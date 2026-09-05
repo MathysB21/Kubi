@@ -8,7 +8,7 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": {
-        target: "http://sunrise.local", // The permanent mDNS hostname!
+        target: "http://kubi.local", // The permanent mDNS hostname!
         changeOrigin: true,
         secure: false,
       },

@@ -1,263 +1,191 @@
-#include "API.h"
+﻿#include "API.h"
 #include <Preferences.h>
 #include <AsyncJson.h>
 #include <ArduinoJson.h>
-#include <SPIFFS.h>
+#include <LittleFS.h>
+#include <WiFi.h>
+#include "PomodoroManager.h"
 
-// Link to the active FSM variables running in main.cpp
-extern volatile int userTargetBright;
-extern volatile int alarmHour;
-extern volatile int alarmMinute;
-extern volatile LampState currentState;
-extern volatile int dynamicSunriseHour;
-extern volatile int dynamicSunriseMinute;
-extern volatile int dynamicSundownHour;
-extern volatile int dynamicSundownMinute;
-extern volatile uint8_t sunriseDays[7];
-extern volatile uint8_t sundownDays[7];
-extern volatile bool isDaytime;
-extern volatile bool forceTimeRecalc;
-
-extern volatile int userTargetTemp;
-
-extern volatile int nightLightBright;
-extern volatile int cfgMaxGlow;
-extern volatile int cfgTouchThreshold;
-extern volatile int cfgProxThreshold;
-extern volatile int cfgAmbientThreshold;
-extern volatile int cfgSunriseDuration;
-extern volatile int cfgSundownDuration;
-extern volatile int cfgSundownHour;
-extern volatile int cfgSundownMinute;
-extern volatile int cfgModeTimeout;
-extern volatile int cfgBrightMode;
-
-extern volatile bool isSunriseEnabled;
-extern volatile bool isSundownEnabled;
-extern volatile int planetDawnH, planetDawnM, planetDuskH, planetDuskM;
-extern volatile float geoLat;
-extern volatile float geoLon;
-extern volatile int tzOffset;
+// --- SHARED GLOBALS (Defined in main.cpp) ---
+extern volatile KubiMode currentMode;
+extern volatile float roomTemperature;
+extern volatile int batteryPercentage;
+extern String secretIcalUrl;
+extern volatile bool isScreenOverrideActive;
+extern String screenOverrideText;
 
 // Diagnostics
-extern volatile int diagProx, diagB1, diagB2, diagB3;
-extern volatile uint16_t ambientLight;
-extern volatile bool cfgProxEnabled;
-
-
+extern volatile float diagAccelX;
+extern volatile float diagAccelY;
+extern volatile float diagAccelZ;
 
 void setupAPIRoutes(AsyncWebServer& server) {
 
-    // --- GET /api/state ---
-    // React calls this on mount to get the current lamp values
-    server.on("/api/state", HTTP_GET, [](AsyncWebServerRequest *request){
+    // =========================================================================
+    // 1. GET /api/state
+    // React calls this on mount and during polling intervals to fetch system state
+    // =========================================================================
+    server.on("/api/state", HTTP_GET, [](AsyncWebServerRequest *request) {
         AsyncResponseStream *response = request->beginResponseStream("application/json");
-        JsonDocument doc; // ArduinoJson v7 syntax
-        
-        doc["brightness"] = userTargetBright;
-        doc["alarmHour"] = alarmHour;
-        doc["alarmMinute"] = alarmMinute;
-        doc["isSunriseEnabled"] = isSunriseEnabled;
-        doc["isSundownEnabled"] = isSundownEnabled;
-        doc["sunriseDuration"] = cfgSunriseDuration;
-        doc["sundownDuration"] = cfgSundownDuration;
-        doc["mode"] = (int)currentState;
-        doc["dawnH"] = dynamicSunriseHour;
-        doc["dawnM"] = dynamicSunriseMinute;
-        doc["duskH"] = dynamicSundownHour;
-        doc["duskM"] = dynamicSundownMinute;
-        doc["temp"] = userTargetTemp;
+        JsonDocument doc;
 
-        JsonArray srArray = doc["sunriseDays"].to<JsonArray>();
-        for(int i=0; i<7; i++) srArray.add(sunriseDays[i]);
-        
-        JsonArray sdArray = doc["sundownDays"].to<JsonArray>();
-        for(int i=0; i<7; i++) sdArray.add(sundownDays[i]);
-        
-        doc["nightLightBright"] = nightLightBright;
-        doc["cfgProxEnabled"] = cfgProxEnabled;
-        doc["cfgMaxGlow"] = cfgMaxGlow;
-        doc["cfgTouchThreshold"] = cfgTouchThreshold;
-        doc["cfgProxThreshold"] = cfgProxThreshold;
-        doc["cfgAmbientThreshold"] = cfgAmbientThreshold;
-        doc["cfgSundownHour"] = cfgSundownHour;
-        doc["cfgSundownMinute"] = cfgSundownMinute;
-        doc["cfgModeTimeout"] = cfgModeTimeout;
-        doc["cfgBrightMode"] = cfgBrightMode;
+        // Active State Data Points
+        doc["mode"] = (int)currentMode;
+        doc["temp"] = roomTemperature;
+        doc["battery"] = batteryPercentage;
+        doc["icalUrl"] = secretIcalUrl;
 
-        doc["geoLat"] = geoLat;
-        doc["geoLon"] = geoLon;
-        doc["tzOffset"] = tzOffset;
-        doc["planetDawnH"] = planetDawnH;
-        doc["planetDawnM"] = planetDawnM;
-        doc["planetDuskH"] = planetDuskH;
-        doc["planetDuskM"] = planetDuskM;
-        
+        // Detailed Pomodoro State
+        JsonObject pomoObj = doc["pomodoro"].to<JsonObject>();
+        pomoObj["phase"]         = (int)pomodoro.getPhase();
+        pomoObj["phaseName"]     = pomodoro.getPhaseName();
+        pomoObj["remaining"]     = pomodoro.getRemainingSeconds();
+        pomoObj["total"]         = pomodoro.getTotalSeconds();
+        pomoObj["isPaused"]      = pomodoro.isPaused();
+        pomoObj["hasChimed"]     = pomodoro.hasChimed();
+        pomoObj["cycle"]         = pomodoro.getCompletedCycles();
+        pomoObj["cycleTarget"]   = pomodoro.getCycleTarget();
+        pomoObj["focusMin"]      = pomodoro.getFocusMinutes();
+        pomoObj["shortBreakMin"] = pomodoro.getShortBreakMinutes();
+        pomoObj["longBreakMin"]  = pomodoro.getLongBreakMinutes();
+        pomoObj["colorWork"]     = pomodoro.getColorWorkHex();
+        pomoObj["colorShort"]    = pomodoro.getColorShortBreakHex();
+        pomoObj["colorLong"]     = pomodoro.getColorLongBreakHex();
+
+        // Convenience top-level fields for backwards compatibility
+        doc["pomodoroFocus"] = pomodoro.getFocusMinutes();
+        doc["pomodoroBreak"] = pomodoro.getShortBreakMinutes();
+
         serializeJson(doc, *response);
         request->send(response);
     });
 
-    // --- POST /api/settings ---
-    // React hits this when Shae moves a slider or saves a time
-    AsyncCallbackJsonWebHandler* handler = new AsyncCallbackJsonWebHandler("/api/settings", [](AsyncWebServerRequest *request, JsonVariant &json) {
+    // =========================================================================
+    // 2. POST /api/settings
+    // React sends user configuration changes (Pomodoro, iCal URL, routines)
+    // =========================================================================
+    AsyncCallbackJsonWebHandler* settingsHandler = new AsyncCallbackJsonWebHandler("/api/settings", [](AsyncWebServerRequest *request, JsonVariant &json) {
         JsonObject jsonObj = json.as<JsonObject>();
 
-        // 1. Master Brightness
-        if (jsonObj["brightness"].is<int>()) {
-            userTargetBright = jsonObj["brightness"].as<int>();
-        }
-
-        // --- 1.1 TEMPERATURE ---
-        if (jsonObj["temp"].is<int>()) {
-            userTargetTemp = jsonObj["temp"].as<int>();
-        }
-
-        // 1.2 Mode
+        // 1. Mode Change
         if (jsonObj["mode"].is<int>()) {
-            int requestedMode = jsonObj["mode"].as<int>();
-            
-            if (requestedMode == 0) {
-                currentState = isDaytime ? STATE_AUTO_DAY : STATE_AUTO_NIGHT; 
-            } else if (requestedMode == 2) {
-                currentState = isDaytime ? STATE_MANUAL_DAY : STATE_MANUAL_NIGHT;
-            } else if (requestedMode == 4) {
-                // Night Light: reset to Amber + 50% defaults each time it is activated
-                userTargetTemp = 0;
-                nightLightBright = 128;
-                userTargetBright = 128;
-                currentState = STATE_NIGHT_LIGHT;
-            } else {
-                currentState = (LampState)requestedMode;
-            }
+            currentMode = (KubiMode)jsonObj["mode"].as<int>();
         }
 
-        // 2. Update all runtime variables first, then commit everything to NVS in one pass.
-        // Opening and closing the Preferences handle once per request (rather than once per key)
-        // is required for reliability on the ESP32: the Preferences class is not designed to have
-        // its handle recycled many times on a shared global, especially from an async task context.
-
-        if (jsonObj["alarmHour"].is<int>() && jsonObj["alarmMinute"].is<int>()) {
-            alarmHour   = jsonObj["alarmHour"].as<int>();
-            alarmMinute = jsonObj["alarmMinute"].as<int>();
-            forceTimeRecalc = true;
-        }
-        if (jsonObj["isSunriseEnabled"].is<bool>()) {
-            isSunriseEnabled = jsonObj["isSunriseEnabled"].as<bool>();
-        }
-        if (jsonObj["isSundownEnabled"].is<bool>()) {
-            isSundownEnabled = jsonObj["isSundownEnabled"].as<bool>();
-        }
-        if (jsonObj["sunriseDuration"].is<int>()) {
-            cfgSunriseDuration = jsonObj["sunriseDuration"].as<int>();
-        }
-        if (jsonObj["sundownDuration"].is<int>()) {
-            cfgSundownDuration = jsonObj["sundownDuration"].as<int>();
-        }
-        if (jsonObj["sunriseDays"].is<JsonArray>()) {
-            JsonArray arr = jsonObj["sunriseDays"].as<JsonArray>();
-            for(int i=0; i<7; i++) sunriseDays[i] = arr[i].as<int>();
-            forceTimeRecalc = true;
-        }
-        if (jsonObj["sundownDays"].is<JsonArray>()) {
-            JsonArray arr = jsonObj["sundownDays"].as<JsonArray>();
-            for(int i=0; i<7; i++) sundownDays[i] = arr[i].as<int>();
-            forceTimeRecalc = true;
-        }
-        if (jsonObj["geoLat"].is<float>() && jsonObj["geoLon"].is<float>()) {
-            geoLat = jsonObj["geoLat"].as<float>();
-            geoLon = jsonObj["geoLon"].as<float>();
-            forceTimeRecalc = true;
-        }
-        if (jsonObj["tzOffset"].is<int>()) {
-            tzOffset = jsonObj["tzOffset"].as<int>();
-            configTime(tzOffset * 3600, 0, "pool.ntp.org");
-            forceTimeRecalc = true;
-        }
-        if (jsonObj["nightLightBright"].is<int>()) {
-            nightLightBright = jsonObj["nightLightBright"].as<int>();
-            if (currentState == STATE_NIGHT_LIGHT) {
-                userTargetBright = nightLightBright;
-            }
-        }
-        if (jsonObj["cfgProxEnabled"].is<bool>()) {
-            cfgProxEnabled = jsonObj["cfgProxEnabled"].as<bool>();
-        }
-        if (jsonObj["cfgMaxGlow"].is<int>()) {
-            cfgMaxGlow = jsonObj["cfgMaxGlow"].as<int>();
-        }
-        if (jsonObj["cfgTouchThreshold"].is<int>()) {
-            cfgTouchThreshold = jsonObj["cfgTouchThreshold"].as<int>();
-        }
-        if (jsonObj["cfgProxThreshold"].is<int>()) {
-            cfgProxThreshold = jsonObj["cfgProxThreshold"].as<int>();
-        }
-        if (jsonObj["cfgAmbientThreshold"].is<int>()) {
-            cfgAmbientThreshold = jsonObj["cfgAmbientThreshold"].as<int>();
-        }
-        if (jsonObj["cfgSundownHour"].is<int>()) {
-            cfgSundownHour   = jsonObj["cfgSundownHour"].as<int>();
-            cfgSundownMinute = jsonObj["cfgSundownMinute"].as<int>();
-            forceTimeRecalc = true;
-        }
-        if (jsonObj["cfgModeTimeout"].is<int>()) {
-            cfgModeTimeout = jsonObj["cfgModeTimeout"].as<int>();
-        }
-        if (jsonObj["cfgBrightMode"].is<int>()) {
-            cfgBrightMode = jsonObj["cfgBrightMode"].as<int>();
+        // 2. Calendar Sync URL
+        if (jsonObj["icalUrl"].is<const char*>()) {
+            secretIcalUrl = jsonObj["icalUrl"].as<String>();
+            Preferences prefs;
+            prefs.begin("kubi_settings", false);
+            prefs.putString("icalUrl", secretIcalUrl);
+            prefs.end();
         }
 
-        // --- SINGLE ATOMIC NVS COMMIT ---
-        // Open once, write every persistent key, close once.
-        Preferences prefs;
-        prefs.begin("lamp_settings", false);
-        prefs.putInt("alarmHour",        alarmHour);
-        prefs.putInt("alarmMinute",      alarmMinute);
-        prefs.putBool("sunriseEnabled",  isSunriseEnabled);
-        prefs.putBool("sundownEnabled",  isSundownEnabled);
-        prefs.putInt("sunriseDuration",  cfgSunriseDuration);
-        prefs.putInt("sundownDuration",  cfgSundownDuration);
-        prefs.putBytes("sunriseDays",    (const void*)sunriseDays, 7);
-        prefs.putBytes("sundownDays",    (const void*)sundownDays, 7);
-        prefs.putFloat("geoLat",         geoLat);
-        prefs.putFloat("geoLon",         geoLon);
-        prefs.putInt("tzOffset",         tzOffset);
-        prefs.putInt("nightLightBright", nightLightBright);
-        prefs.putBool("proxEnabled",     cfgProxEnabled);
-        prefs.putInt("cfgMaxGlow",       cfgMaxGlow);
-        prefs.putInt("touchThreshold",   cfgTouchThreshold);  // renamed: 14 chars
-        prefs.putInt("proxThreshold",    cfgProxThreshold);    // renamed: 13 chars
-        prefs.putInt("ambientThresh",    cfgAmbientThreshold); // renamed: 13 chars
-        prefs.putInt("cfgSundownHour",   cfgSundownHour);
-        prefs.putInt("sundownMinute",    cfgSundownMinute);    // renamed: 13 chars
-        prefs.putInt("cfgModeTimeout",   cfgModeTimeout);
-        prefs.putInt("cfgBrightMode",    cfgBrightMode);
-        prefs.putInt("userBright",       userTargetBright);
-        prefs.putInt("userTemp",         userTargetTemp);
-        prefs.end();
+        // 3. Pomodoro Durations
+        int focus = pomodoro.getFocusMinutes();
+        int sBreak = pomodoro.getShortBreakMinutes();
+        int lBreak = pomodoro.getLongBreakMinutes();
+        int cycles = pomodoro.getCycleTarget();
+        bool durationChanged = false;
+
+        if (jsonObj["pomodoroFocus"].is<int>()) { focus = jsonObj["pomodoroFocus"].as<int>(); durationChanged = true; }
+        if (jsonObj["focusMin"].is<int>())      { focus = jsonObj["focusMin"].as<int>(); durationChanged = true; }
+        if (jsonObj["pomodoroBreak"].is<int>()) { sBreak = jsonObj["pomodoroBreak"].as<int>(); durationChanged = true; }
+        if (jsonObj["shortBreakMin"].is<int>()) { sBreak = jsonObj["shortBreakMin"].as<int>(); durationChanged = true; }
+        if (jsonObj["longBreakMin"].is<int>())  { lBreak = jsonObj["longBreakMin"].as<int>(); durationChanged = true; }
+        if (jsonObj["cycleTarget"].is<int>())   { cycles = jsonObj["cycleTarget"].as<int>(); durationChanged = true; }
+
+        if (durationChanged) {
+            pomodoro.setDurations(focus, sBreak, lBreak, cycles);
+        }
+
+        // 4. Pomodoro Colors
+        String cWork  = pomodoro.getColorWorkHex();
+        String cShort = pomodoro.getColorShortBreakHex();
+        String cLong  = pomodoro.getColorLongBreakHex();
+        bool colorChanged = false;
+
+        if (jsonObj["colorWork"].is<const char*>())  { cWork = jsonObj["colorWork"].as<String>(); colorChanged = true; }
+        if (jsonObj["colorShort"].is<const char*>()) { cShort = jsonObj["colorShort"].as<String>(); colorChanged = true; }
+        if (jsonObj["colorLong"].is<const char*>())  { cLong = jsonObj["colorLong"].as<String>(); colorChanged = true; }
+
+        if (colorChanged) {
+            pomodoro.setColors(cWork, cShort, cLong);
+        }
 
         request->send(200, "application/json", "{\"status\":\"success\"}");
     });
+    server.addHandler(settingsHandler);
 
-    // --- GET /api/diagnostics ---
-    // A lightweight, manual-only fetch for raw hardware telemetry
-    server.on("/api/diagnostics", HTTP_GET, [](AsyncWebServerRequest *request){
+    // =========================================================================
+    // 3. POST /api/pomodoro/action
+    // Direct dashboard controls: play, pause, toggle, skip, reset
+    // =========================================================================
+    AsyncCallbackJsonWebHandler* actionHandler = new AsyncCallbackJsonWebHandler("/api/pomodoro/action", [](AsyncWebServerRequest *request, JsonVariant &json) {
+        JsonObject jsonObj = json.as<JsonObject>();
+        if (jsonObj["action"].is<const char*>()) {
+            String act = jsonObj["action"].as<String>();
+            if (act == "play") {
+                pomodoro.play();
+            } else if (act == "pause") {
+                pomodoro.pause();
+            } else if (act == "toggle") {
+                pomodoro.togglePause();
+            } else if (act == "skip") {
+                pomodoro.skipPhase();
+            } else if (act == "reset") {
+                pomodoro.resetCurrent();
+            }
+            request->send(200, "application/json", "{\"status\":\"success\"}");
+        } else {
+            request->send(400, "application/json", "{\"error\":\"missing action\"}");
+        }
+    });
+    server.addHandler(actionHandler);
+
+    // =========================================================================
+    // 4. POST /api/override
+    // Secret creator endpoint: push real-time text alert banners to Kubi's screen
+    // =========================================================================
+    AsyncCallbackJsonWebHandler* overrideHandler = new AsyncCallbackJsonWebHandler("/api/override", [](AsyncWebServerRequest *request, JsonVariant &json) {
+        JsonObject jsonObj = json.as<JsonObject>();
+
+        if (jsonObj["message"].is<const char*>()) {
+            screenOverrideText = jsonObj["message"].as<String>();
+            isScreenOverrideActive = true;
+            Serial.printf("[OVERRIDE] Custom alert received: %s\n", screenOverrideText.c_str());
+            request->send(200, "application/json", "{\"status\":\"alert_displayed\"}");
+        } else {
+            request->send(400, "application/json", "{\"error\":\"missing message field\"}");
+        }
+    });
+    server.addHandler(overrideHandler);
+
+    // =========================================================================
+    // 5. GET /api/diagnostics
+    // Real-time telemetry: IMU axes, temperature, battery, WiFi signal
+    // =========================================================================
+    server.on("/api/diagnostics", HTTP_GET, [](AsyncWebServerRequest *request) {
         AsyncResponseStream *response = request->beginResponseStream("application/json");
-        JsonDocument doc; 
-        
-        doc["prox"] = diagProx;
-        doc["b1"] = diagB1;
-        doc["b2"] = diagB2;
-        doc["b3"] = diagB3;
-        doc["ambient"] = ambientLight;
-        doc["stateCode"] = (int)currentState;
-        
+        JsonDocument doc;
+
+        doc["accelX"] = diagAccelX;
+        doc["accelY"] = diagAccelY;
+        doc["accelZ"] = diagAccelZ;
+        doc["temp"] = roomTemperature;
+        doc["battery"] = batteryPercentage;
+        doc["rssi"] = WiFi.RSSI();
+        doc["freeHeap"] = ESP.getFreeHeap();
+        doc["uptime"] = millis() / 1000;
+        doc["mode"] = (int)currentMode;
+
         serializeJson(doc, *response);
         request->send(response);
     });
-    
-    server.addHandler(handler);
 
-    // --- SERVE THE REACT FRONTEND ---
-    // This tells the server: "If someone asks for a file, look in SPIFFS. If they just go to '/', give them index.html."
-    server.serveStatic("/", SPIFFS, "/").setDefaultFile("index.html");
+    // =========================================================================
+    // 6. SERVE STATIC REACT FRONTEND FROM LITTLEFS
+    // Default file: index.html
+    // =========================================================================
+    server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
 }
