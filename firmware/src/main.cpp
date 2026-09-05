@@ -37,6 +37,7 @@ volatile float diagAccelZ = 1.0f;
 static std::vector<String> cachedAgenda;
 static int schedulePage = 0;
 static bool clockShowDetails = false;
+static bool clockAnalogView = false;
 static uint32_t clockDetailsTimeout = 0;
 
 // --- NETWORK & TIME CONFIG ---
@@ -326,6 +327,10 @@ void core1HardwareTask(void * parameter) {
             if (currentMode == MODE_POMODORO) {
               // Shake: Skip to next phase
               pomodoro.handleShake();
+            } else if (currentMode == MODE_CLOCK_IDLE) {
+              clockAnalogView = !clockAnalogView;
+              audio.playChime(CHIME_TAP_FEEDBACK);
+              Serial.printf("[CLOCK] Shake detected -> Switched to %s clock view\n", clockAnalogView ? "analog" : "digital");
             }
             break;
 
@@ -365,7 +370,7 @@ void core1HardwareTask(void * parameter) {
 
         switch (currentMode) {
           case MODE_CLOCK_IDLE:
-            display.drawClockFace(currentHour, currentMin, currentWday, currentMday, currentMon, clockShowDetails, "Design Review 14:00", "^ AAPL +1.2% | BTC $92k");
+            display.drawClockFace(currentHour, currentMin, currentWday, currentMday, currentMon, clockShowDetails, clockAnalogView, "Design Review 14:00", "^ AAPL +1.2% | BTC $92k");
             break;
 
           case MODE_POMODORO:

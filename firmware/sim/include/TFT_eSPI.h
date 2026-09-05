@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <cmath>
+#include <algorithm>
 
 // Standard 16-bit RGB565 Colors
 #define TFT_BLACK       0x0000
@@ -135,6 +136,31 @@ public:
         if (h < 0) { y += h; h = -h; }
         for (int32_t i = 0; i < h; i++) {
             drawPixel(x, y + i, color);
+        }
+    }
+
+    void drawLine(int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint16_t color) {
+        if (x0 == x1) {
+            if (y0 > y1) std::swap(y0, y1);
+            drawFastVLine(x0, y0, y1 - y0 + 1, color);
+            return;
+        }
+        if (y0 == y1) {
+            if (x0 > x1) std::swap(x0, x1);
+            drawFastHLine(x0, y0, x1 - x0 + 1, color);
+            return;
+        }
+        int32_t dx = std::abs(x1 - x0);
+        int32_t dy = -std::abs(y1 - y0);
+        int32_t sx = x0 < x1 ? 1 : -1;
+        int32_t sy = y0 < y1 ? 1 : -1;
+        int32_t err = dx + dy;
+        while (true) {
+            drawPixel(x0, y0, color);
+            if (x0 == x1 && y0 == y1) break;
+            int32_t e2 = 2 * err;
+            if (e2 >= dy) { err += dy; x0 += sx; }
+            if (e2 <= dx) { err += dx; y0 += sy; }
         }
     }
 

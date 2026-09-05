@@ -1,4 +1,5 @@
 #include "DisplayManager.h"
+#include <cmath>
 
 #define BACKLIGHT_PIN 32
 #define PWM_CHANNEL   0
@@ -96,11 +97,12 @@ void DisplayManager::drawBootScreen(const String& status) {
     _tft.drawString(status, cx, h - 30, 2);
 }
 
-void DisplayManager::drawClockFace(int hour, int minute, bool showDetails, const String& nextEvent, const String& ticker) {
-    drawClockFace(hour, minute, -1, 1, 0, showDetails, nextEvent, ticker);
-}
+void DisplayManager::drawClockFace(int hour, int minute, int wday, int mday, int month, bool showDetails, bool isAnalog, const String& nextEvent, const String& ticker) {
+    if (isAnalog && !showDetails) {
+        drawAnalogClockFace(hour, minute, wday, mday, month);
+        return;
+    }
 
-void DisplayManager::drawClockFace(int hour, int minute, int wday, int mday, int month, bool showDetails, const String& nextEvent, const String& ticker) {
     int w = _tft.width();
     int h = _tft.height();
     int cx = w / 2;
@@ -151,6 +153,86 @@ void DisplayManager::drawClockFace(int hour, int minute, int wday, int mday, int
             _tft.setTextColor(TFT_CYAN, TFT_BLACK);
             _tft.drawString(ticker, 20, h - 25, 2);
         }
+    }
+}
+
+void DisplayManager::drawAnalogClockFace(int hour, int minute, int wday, int mday, int month) {
+    int w = _tft.width();
+    int h = _tft.height();
+    int cx = w / 2;
+    int cy = h / 2;
+
+    _tft.fillScreen(TFT_BLACK);
+
+    // Subtle outer dial bezel ring
+    _tft.drawCircle(cx, cy, 96, 0x2965);
+
+    // 12 Numbers arranged in clock circle
+    int radiusNumbers = 82;
+    _tft.setTextDatum(MC_DATUM);
+    _tft.setTextColor(TFT_WHITE, TFT_BLACK);
+
+    for (int num = 1; num <= 12; num++) {
+        float angleDeg = num * 30.0f - 90.0f;
+        float angleRad = angleDeg * 0.0174532925f;
+        int nx = cx + (int)round(radiusNumbers * cos(angleRad));
+        int ny = cy + (int)round(radiusNumbers * sin(angleRad));
+
+        char numStr[4];
+        snprintf(numStr, sizeof(numStr), "%d", num);
+        _tft.drawString(numStr, nx, ny, 2);
+    }
+
+    // Arm angles
+    float hourVal = (hour % 12) + (minute / 60.0f);
+    float hourAngleRad = (hourVal * 30.0f - 90.0f) * 0.0174532925f;
+    float minAngleRad = (minute * 6.0f - 90.0f) * 0.0174532925f;
+
+    // Hour arm: shorter and a nice orange colour (3px wide)
+    int rHour = 44;
+    int hx = cx + (int)round(rHour * cos(hourAngleRad));
+    int hy = cy + (int)round(rHour * sin(hourAngleRad));
+
+    float hdx = (float)(hx - cx);
+    float hdy = (float)(hy - cy);
+    float hlen = sqrt(hdx * hdx + hdy * hdy);
+    if (hlen > 0.1f) {
+        float hnx = -hdy / hlen;
+        float hny = hdx / hlen;
+        _tft.drawLine(cx, cy, hx, hy, TFT_ORANGE);
+        _tft.drawLine(cx + (int)round(hnx), cy + (int)round(hny), hx + (int)round(hnx), hy + (int)round(hny), TFT_ORANGE);
+        _tft.drawLine(cx - (int)round(hnx), cy - (int)round(hny), hx - (int)round(hnx), hy - (int)round(hny), TFT_ORANGE);
+    }
+
+    // Minute arm: long white line (2px wide)
+    int rMin = 66;
+    int mx = cx + (int)round(rMin * cos(minAngleRad));
+    int my = cy + (int)round(rMin * sin(minAngleRad));
+
+    float mdx = (float)(mx - cx);
+    float mdy = (float)(my - cy);
+    float mlen = sqrt(mdx * mdx + mdy * mdy);
+    if (mlen > 0.1f) {
+        float mnx = -mdy / mlen;
+        float mny = mdx / mlen;
+        _tft.drawLine(cx, cy, mx, my, TFT_WHITE);
+        _tft.drawLine(cx + (int)round(mnx * 0.7f), cy + (int)round(mny * 0.7f),
+                      mx + (int)round(mnx * 0.7f), my + (int)round(mny * 0.7f), TFT_WHITE);
+    }
+
+    // Center pivot
+    _tft.fillCircle(cx, cy, 3, TFT_ORANGE);
+    _tft.fillCircle(cx, cy, 1, TFT_WHITE);
+
+    // Current date at bottom
+    if (wday >= 0 && wday < 7 && month >= 0 && month < 12 && mday >= 1 && mday <= 31) {
+        static const char* const DAY_NAMES[] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+        static const char* const MONTH_NAMES[] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+        char dateBuf[32];
+        snprintf(dateBuf, sizeof(dateBuf), "%s, %d %s", DAY_NAMES[wday], mday, MONTH_NAMES[month]);
+        _tft.setTextDatum(MC_DATUM);
+        _tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+        _tft.drawString(dateBuf, cx, cy + 124, 2);
     }
 }
 

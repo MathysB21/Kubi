@@ -56,6 +56,7 @@ static std::vector<String> cachedAgenda = {
 };
 static int schedulePage = 0;
 static bool clockShowDetails = false;
+static bool clockAnalogView = false;
 static uint32_t clockDetailsTimeout = 0;
 
 // Helper: Convert 16-bit RGB565 to 32-bit RGBA (for web canvas)
@@ -162,6 +163,12 @@ void hardwareSimulationThread() {
                             pomodoro.handleShake();
                             sim_last_chime_name = "CHIME_POMODORO_DONE";
                             sim_last_chime_time = now;
+                        } else if (currentMode == MODE_CLOCK_IDLE) {
+                            clockAnalogView = !clockAnalogView;
+                            audio.playChime(CHIME_TAP_FEEDBACK);
+                            sim_last_chime_name = "CHIME_TAP_FEEDBACK";
+                            sim_last_chime_time = now;
+                            std::cout << "[SIM CLOCK] Shake toggled view -> " << (clockAnalogView ? "analog" : "digital") << std::endl;
                         }
                         break;
 
@@ -202,7 +209,7 @@ void hardwareSimulationThread() {
 
                 switch (currentMode) {
                     case MODE_CLOCK_IDLE:
-                        display.drawClockFace(currentHour, currentMin, currentWday, currentMday, currentMon, clockShowDetails,
+                        display.drawClockFace(currentHour, currentMin, currentWday, currentMday, currentMon, clockShowDetails, clockAnalogView,
                                               "Design Review 14:00", "^ AAPL +1.2% | BTC $92k");
                         break;
 
@@ -515,6 +522,7 @@ int main() {
         doc["lastChimeTime"] = sim_last_chime_time;
         doc["isSleeping"] = display.isSleeping();
         doc["mode"] = (int)currentMode;
+        doc["isAnalog"] = clockAnalogView;
 
         struct tm ti;
         if (getLocalTime(&ti)) {

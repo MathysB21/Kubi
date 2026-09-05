@@ -496,7 +496,7 @@ export default function Simulator() {
                     <div>
                       <div className="font-semibold text-sm text-zinc-100">Shake Cube</div>
                       <div className="text-[11px] text-zinc-400">
-                        Skip Pomodoro phase immediately
+                        Toggle Analog Clock / Skip Pomodoro
                       </div>
                     </div>
                   </button>
