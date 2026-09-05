@@ -291,11 +291,8 @@ void core1HardwareTask(void * parameter) {
           activeFace == 2 ? "Face 3 (Mascot & Temp)" : "Face 4 (Schedule Agenda)"
         );
 
-        // Entering Pomodoro: start/resume timer
-        if (currentMode == MODE_POMODORO) {
-          pomodoro.play();
-        }
         clockShowDetails = false;
+        sensors.getRecentGesture(); // Flush any transient gesture during orientation transition
       }
     }
 

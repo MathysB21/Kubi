@@ -113,10 +113,9 @@ void hardwareSimulationThread() {
                 std::cout << "[KUBI ORIENTATION] >>> Face " << (activeFace + 1)
                           << " UP: Screen rotated upright <<<" << std::endl;
 
-                if (currentMode == MODE_POMODORO) {
-                    pomodoro.play();
-                }
                 clockShowDetails = false;
+                sim_injected_gesture = GESTURE_NONE;
+                sensors.getRecentGesture();
             }
         }
 
@@ -494,10 +493,9 @@ int main() {
 
                 currentMode = (KubiMode)face;
                 display.setRotationForFace(face);
-                if (currentMode == MODE_POMODORO) {
-                    pomodoro.play();
-                }
                 clockShowDetails = false;
+                sim_injected_gesture = GESTURE_NONE;
+                sensors.getRecentGesture();
             }
         }
 

@@ -240,11 +240,8 @@ void DisplayManager::drawPomodoroFace(int remainingSeconds, int totalSeconds, co
 
     // Status Line
     if (isPaused) {
-        _tft.setTextColor(TFT_RED, TFT_BLACK);
-        _tft.drawString("PAUSED  (Tap: Play | Shake: Skip)", cx, h - 38, 2);
-    } else {
-        _tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-        _tft.drawString("Tap: Pause | Shake: Skip", cx, h - 38, 2);
+        _tft.setTextColor(TFT_WHITE, TFT_BLACK);
+        _tft.drawString("PAUSED", cx, h - 38, 2);
     }
 
     // Progress bar at bottom

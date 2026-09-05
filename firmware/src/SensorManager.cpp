@@ -161,10 +161,12 @@ void SensorManager::updateFace(float x, float y, float z) {
         candidateFace = detected;
         faceCandidateStartTime = millis();
         _lastTapTime = millis(); // Suppress false tap detection during orientation flips
+        _recentGesture = GESTURE_NONE;
     } else if (millis() - faceCandidateStartTime > 400) {
         if (_activeFace != candidateFace && candidateFace <= 3) {
             _activeFace = candidateFace;
             _lastTapTime = millis(); // Suppress tap when face settles
+            _recentGesture = GESTURE_NONE;
             Serial.printf("[ORIENTATION] Cube resting on Face %d UP\n", _activeFace + 1);
         }
     }

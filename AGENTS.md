@@ -87,7 +87,7 @@ Kubi uses **Software-in-the-Loop** simulation:
    - Do not add desktop-specific `#ifdef` hacks directly into `firmware/src/*.cpp` unless strictly necessary. Keep simulation mocks isolated inside `firmware/sim/`.
 4. **Suppress False Taps During Orientation Changes**:
    - Rolling or flipping the cube produces high accelerometer delta transients (`deltaMag > 7.0f`).
-   - In `SensorManager::updateFace()`, always update `_lastTapTime = millis()` during candidate face transitions and when orientation settles to avoid triggering false tap gestures.
+   - In `SensorManager::updateFace()`, always update `_lastTapTime = millis()` and reset `_recentGesture = GESTURE_NONE` during candidate face transitions and when orientation settles to avoid triggering false tap gestures. Drain any pending gestures when switching faces.
 5. **C/C++ Preprocessor Comment Gotcha**:
    - Never end a single-line comment with a trailing backslash (`// \`). In standard C/C++, this joins the next line to the comment as a line continuation, deleting whatever was on that line!
 6. **When Modifying Frontend**:
@@ -103,8 +103,10 @@ Kubi uses **Software-in-the-Loop** simulation:
   - **Shake Gesture (`GESTURE_SHAKE`)**: Toggles between digital 7-segment clock and a clean analog clock view (12 radial numbers, 3px orange hour hand, 2px white minute hand, center pivot, and date below, without any circular border).
   - **View Persistence**: The user's digital vs. analog view choice is preserved in NVS Preferences (`"kubi_settings"` namespace, key `"clockAnalog"`) on hardware and in `kubi_sim_prefs.txt` in the simulator.
 * **Face 2: Pomodoro Timer**:
-  - Auto-plays upon tilting face up.
+  - Focus and break countdowns with cycle tracking and customized phase colors.
   - Gentle tap toggles pause/play. Shake gesture skips to next phase.
+  - Minimal UI: Shows clean centered white "PAUSED" text when paused; no cluttering interaction instruction text.
+  - **Pause State Persistence**: If the timer is paused, navigating to another face and returning preserves the paused state without auto-resuming.
 * **Face 3: Mascot & Room Temp**:
   - Animated bouncing Kubi jelly character and live room temperature readings from BMP280.
 * **Face 4: Schedule Agenda**:
