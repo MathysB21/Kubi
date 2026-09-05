@@ -93,6 +93,24 @@ void hardwareSimulationThread() {
         audio.loop();
         display.loop();
 
+        // Synchronize active firmware chime to simulator telemetry
+        static KubiChime prevActiveChime = CHIME_NONE;
+        KubiChime curChime = audio.getActiveChime();
+        if (curChime != prevActiveChime) {
+            prevActiveChime = curChime;
+            if (curChime != CHIME_NONE) {
+                sim_last_chime_time = now;
+                switch (curChime) {
+                    case CHIME_TAP_FEEDBACK: sim_last_chime_name = "CHIME_TAP_FEEDBACK"; break;
+                    case CHIME_WAKE_PING: sim_last_chime_name = "CHIME_WAKE_PING"; break;
+                    case CHIME_POMODORO_DONE: sim_last_chime_name = "CHIME_POMODORO_DONE"; break;
+                    case CHIME_POMODORO_LONG_BREAK: sim_last_chime_name = "CHIME_POMODORO_LONG_BREAK"; break;
+                    case CHIME_SLAM_OUCH: sim_last_chime_name = "CHIME_SLAM_OUCH"; break;
+                    default: break;
+                }
+            }
+        }
+
         // 2. 1-second Pomodoro Countdown Tick
         if (now - lastPomoTick >= 1000) {
             lastPomoTick = now;
@@ -160,8 +178,6 @@ void hardwareSimulationThread() {
                         std::cout << "[SIM GESTURE] Shake detected." << std::endl;
                         if (currentMode == MODE_POMODORO) {
                             pomodoro.handleShake();
-                            sim_last_chime_name = "CHIME_POMODORO_DONE";
-                            sim_last_chime_time = now;
                         } else if (currentMode == MODE_CLOCK_IDLE) {
                             clockAnalogView = !clockAnalogView;
                             Preferences prefs;

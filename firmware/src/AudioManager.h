@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <Arduino.h>
 #include <AudioOutputI2S.h>
 
@@ -6,6 +6,7 @@ enum KubiChime {
     CHIME_NONE = 0,
     CHIME_TAP_FEEDBACK,
     CHIME_POMODORO_DONE,
+    CHIME_POMODORO_LONG_BREAK,
     CHIME_WAKE_PING,
     CHIME_SLAM_OUCH
 };
@@ -20,6 +21,7 @@ public:
     void playChime(KubiChime chime);
     void stop();
     bool isPlaying() const { return _activeChime != CHIME_NONE; }
+    KubiChime getActiveChime() const { return _activeChime; }
     void setVolume(float gain); // 0.0 to 1.0
 
 private:

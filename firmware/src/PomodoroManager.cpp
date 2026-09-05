@@ -78,8 +78,14 @@ void PomodoroManager::tick() {
         _remainingSeconds--;
         if (_remainingSeconds == 0 && !_hasChimed) {
             _hasChimed = true;
-            audio.playChime(CHIME_POMODORO_DONE);
-            Serial.printf("[POMODORO] %s complete! Chime ringing.\n", getPhaseName());
+            // If the completed focus session leads to a LONG BREAK, play unique long chime
+            if (_phase == POMO_WORK && (_completedCycles + 1 >= _cycleTarget)) {
+                audio.playChime(CHIME_POMODORO_LONG_BREAK);
+                Serial.printf("[POMODORO] %s complete! All sessions done -> LONG BREAK chime ringing!\n", getPhaseName());
+            } else {
+                audio.playChime(CHIME_POMODORO_DONE);
+                Serial.printf("[POMODORO] %s complete! Chime ringing.\n", getPhaseName());
+            }
         }
     }
 }
@@ -132,7 +138,13 @@ void PomodoroManager::skipPhase() {
         _hasChimed = false;
     }
     advancePhase();
-    audio.playChime(CHIME_WAKE_PING);
+    if (_phase == POMO_LONG_BREAK) {
+        audio.playChime(CHIME_POMODORO_LONG_BREAK);
+    } else if (_phase == POMO_SHORT_BREAK) {
+        audio.playChime(CHIME_POMODORO_DONE);
+    } else {
+        audio.playChime(CHIME_WAKE_PING);
+    }
 }
 
 void PomodoroManager::resetCurrent() {

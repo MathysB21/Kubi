@@ -1,4 +1,4 @@
-﻿#include "AudioManager.h"
+#include "AudioManager.h"
 #include <math.h>
 
 #define I2S_BCLK_PIN 26
@@ -30,6 +30,17 @@ static const Note NOTES_POMO_DONE[] = {
     { 659.25f, 100 }, // E5
     { 783.99f, 100 }, // G5
     { 1046.50f, 250 }, // C6
+    { 0.0f, 0 }
+};
+
+static const Note NOTES_POMO_LONG_BREAK[] = {
+    { 523.25f, 90 },   // C5
+    { 659.25f, 90 },   // E5
+    { 783.99f, 90 },   // G5
+    { 1046.50f, 130 }, // C6
+    { 1174.66f, 100 }, // D6
+    { 1318.51f, 120 }, // E6
+    { 1567.98f, 350 }, // G6
     { 0.0f, 0 }
 };
 
@@ -78,6 +89,7 @@ void AudioManager::playChime(KubiChime chime) {
     if (chime == CHIME_TAP_FEEDBACK)  sequence = NOTES_TAP;
     else if (chime == CHIME_WAKE_PING) sequence = NOTES_WAKE;
     else if (chime == CHIME_POMODORO_DONE) sequence = NOTES_POMO_DONE;
+    else if (chime == CHIME_POMODORO_LONG_BREAK) sequence = NOTES_POMO_LONG_BREAK;
     else if (chime == CHIME_SLAM_OUCH) sequence = NOTES_SLAM_OUCH;
 
     if (sequence && sequence[0].durationMs > 0) {
@@ -105,6 +117,7 @@ void AudioManager::updateSynthesizer() {
     if (_activeChime == CHIME_TAP_FEEDBACK) sequence = NOTES_TAP;
     else if (_activeChime == CHIME_WAKE_PING) sequence = NOTES_WAKE;
     else if (_activeChime == CHIME_POMODORO_DONE) sequence = NOTES_POMO_DONE;
+    else if (_activeChime == CHIME_POMODORO_LONG_BREAK) sequence = NOTES_POMO_LONG_BREAK;
     else if (_activeChime == CHIME_SLAM_OUCH) sequence = NOTES_SLAM_OUCH;
 
     if (!sequence) {

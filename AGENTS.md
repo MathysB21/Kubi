@@ -108,6 +108,9 @@ Kubi uses **Software-in-the-Loop** simulation:
   - Gentle tap toggles pause/play. Shake gesture skips to next phase.
   - Minimal UI: Shows clean centered white "PAUSED" text when paused; no cluttering interaction instruction text.
   - **Pause State Persistence**: If the timer is paused, navigating to another face and returning preserves the paused state without auto-resuming.
+  - **Chimes**:
+    - `CHIME_POMODORO_DONE`: 4-note ascending C major arpeggio (C5 -> E5 -> G5 -> C6) for focus session completion and short breaks.
+    - `CHIME_POMODORO_LONG_BREAK`: Unique extended 7-note triumphant fanfare (C5 -> E5 -> G5 -> C6 -> D6 -> E6 -> G6) played when all cycles finish and transitioning into the Long Break.
 * **Face 3: Mascot & Room Temp**:
   - Animated bouncing Kubi jelly character and live room temperature readings from BMP280.
 * **Face 4: Schedule Agenda**:
