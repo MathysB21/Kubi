@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <Arduino.h>
 
 enum PomodoroPhase {
@@ -31,6 +31,7 @@ public:
     int getRemainingSeconds() const { return _remainingSeconds; }
     int getTotalSeconds() const { return _totalSeconds; }
     bool isPaused() const { return _isPaused; }
+    bool isStarted() const { return _isStarted; }
     bool hasChimed() const { return _hasChimed; }
     int getCompletedCycles() const { return _completedCycles; }
     int getCycleTarget() const { return _cycleTarget; }
@@ -59,6 +60,7 @@ private:
     PomodoroPhase _phase;
     int _remainingSeconds;
     int _totalSeconds;
+    bool _isStarted;
     bool _isPaused;
     bool _hasChimed;
     int _completedCycles;

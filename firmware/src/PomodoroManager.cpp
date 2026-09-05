@@ -1,4 +1,4 @@
-﻿#include "PomodoroManager.h"
+#include "PomodoroManager.h"
 #include "AudioManager.h"
 #include <Preferences.h>
 
@@ -8,6 +8,7 @@ PomodoroManager::PomodoroManager()
     : _phase(POMO_WORK),
       _remainingSeconds(25 * 60),
       _totalSeconds(25 * 60),
+      _isStarted(false),
       _isPaused(false),
       _hasChimed(false),
       _completedCycles(0),
@@ -37,6 +38,7 @@ void PomodoroManager::init() {
 
     _phase = POMO_WORK;
     _completedCycles = 0;
+    _isStarted = false;
     _isPaused = false;
     _hasChimed = false;
     updatePhaseDurations();
@@ -72,7 +74,7 @@ uint16_t PomodoroManager::getPhaseColor() const {
 }
 
 void PomodoroManager::tick() {
-    if (!_isPaused && _remainingSeconds > 0) {
+    if (_isStarted && !_isPaused && _remainingSeconds > 0) {
         _remainingSeconds--;
         if (_remainingSeconds == 0 && !_hasChimed) {
             _hasChimed = true;
@@ -90,7 +92,7 @@ void PomodoroManager::handleTap() {
         advancePhase();
         Serial.println("[POMODORO] Tap dismissed chime -> advancing to next phase.");
     } else {
-        // Toggle Pause / Play
+        // Start or Toggle Pause / Play
         togglePause();
         audio.playChime(CHIME_TAP_FEEDBACK);
     }
@@ -103,6 +105,7 @@ void PomodoroManager::handleShake() {
 }
 
 void PomodoroManager::play() {
+    _isStarted = true;
     _isPaused = false;
     Serial.println("[POMODORO] Resumed/Playing");
 }
@@ -113,8 +116,14 @@ void PomodoroManager::pause() {
 }
 
 void PomodoroManager::togglePause() {
-    _isPaused = !_isPaused;
-    Serial.printf("[POMODORO] Pause toggled -> %s\n", _isPaused ? "PAUSED" : "RUNNING");
+    if (!_isStarted) {
+        _isStarted = true;
+        _isPaused = false;
+        Serial.println("[POMODORO] Started from idle");
+    } else {
+        _isPaused = !_isPaused;
+        Serial.printf("[POMODORO] Pause toggled -> %s\n", _isPaused ? "PAUSED" : "RUNNING");
+    }
 }
 
 void PomodoroManager::skipPhase() {
@@ -132,6 +141,7 @@ void PomodoroManager::resetCurrent() {
         _hasChimed = false;
     }
     _remainingSeconds = _totalSeconds;
+    _isStarted = false;
     _isPaused = false;
     audio.playChime(CHIME_TAP_FEEDBACK);
     Serial.printf("[POMODORO] Current phase %s reset to %d mins\n", getPhaseName(), _totalSeconds / 60);
@@ -151,6 +161,7 @@ void PomodoroManager::advancePhase() {
     }
 
     updatePhaseDurations();
+    _isStarted = true;
     _isPaused = false;
     Serial.printf("[POMODORO] Switched to %s (%d min) | Cycle %d of %d\n",
                   getPhaseName(), _totalSeconds / 60, _completedCycles + 1, _cycleTarget);

@@ -36,6 +36,7 @@ interface PomodoroState {
   remaining: number;
   total: number;
   isPaused: boolean;
+  isStarted: boolean;
   hasChimed: boolean;
   cycle: number;
   cycleTarget: number;
@@ -86,6 +87,7 @@ const DEFAULT_STATE: KubiState = {
     remaining: 25 * 60,
     total: 25 * 60,
     isPaused: false,
+    isStarted: false,
     hasChimed: false,
     cycle: 0,
     cycleTarget: 4,
@@ -460,7 +462,11 @@ function KubiDashboard() {
                 {formatTime(pomo.remaining)}
               </div>
               <p className="text-xs text-zinc-500 mt-2 font-medium tracking-wide">
-                {pomo.isPaused ? "PAUSED (TAP CUBE TO RESUME)" : "TICKING ON KUBI SCREEN"}
+                {!pomo.isStarted
+                  ? "READY (TAP CUBE TO START)"
+                  : pomo.isPaused
+                  ? "PAUSED (TAP CUBE TO RESUME)"
+                  : "TICKING ON KUBI SCREEN"}
               </p>
             </div>
 
@@ -478,11 +484,31 @@ function KubiDashboard() {
             {/* Action Buttons: Play/Pause, Skip, Reset */}
             <div className="grid grid-cols-3 gap-2.5">
               <button
-                onClick={() => pomodoroActionMutation.mutate(pomo.isPaused ? "play" : "pause")}
+                onClick={() => {
+                  if (!pomo.isStarted) {
+                    pomodoroActionMutation.mutate("play");
+                  } else {
+                    pomodoroActionMutation.mutate(pomo.isPaused ? "play" : "pause");
+                  }
+                }}
                 className="py-2.5 flex items-center justify-center gap-1.5 rounded-xl text-xs font-medium bg-zinc-950 hover:bg-zinc-800 text-zinc-200 transition-colors cursor-pointer border border-zinc-800"
               >
-                {pomo.isPaused ? <Play size={14} className="fill-current text-amber-500" /> : <Pause size={14} className="text-amber-500" />}
-                {pomo.isPaused ? "Resume" : "Pause"}
+                {!pomo.isStarted ? (
+                  <>
+                    <Play size={14} className="fill-current text-amber-500" />
+                    Start
+                  </>
+                ) : pomo.isPaused ? (
+                  <>
+                    <Play size={14} className="fill-current text-amber-500" />
+                    Resume
+                  </>
+                ) : (
+                  <>
+                    <Pause size={14} className="text-amber-500" />
+                    Pause
+                  </>
+                )}
               </button>
               <button
                 onClick={() => pomodoroActionMutation.mutate("skip")}

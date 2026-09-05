@@ -207,7 +207,7 @@ void DisplayManager::drawAnalogClockFace(int hour, int minute, int wday, int mda
     }
 }
 
-void DisplayManager::drawPomodoroFace(int remainingSeconds, int totalSeconds, const char* phaseName, bool isPaused, uint16_t textColor, int currentCycle, int cycleTarget) {
+void DisplayManager::drawPomodoroFace(int remainingSeconds, int totalSeconds, const char* phaseName, bool isPaused, bool isStarted, uint16_t textColor, int currentCycle, int cycleTarget) {
     int w = _tft.width();
     int h = _tft.height();
     int cx = w / 2;
@@ -239,7 +239,13 @@ void DisplayManager::drawPomodoroFace(int remainingSeconds, int totalSeconds, co
     _tft.drawString(buf, cx, cy + 5, 7);
 
     // Status Line
-    if (isPaused) {
+    if (!isStarted) {
+        // Slow arcade-style flashing "START" (~1.2s cycle: 600ms on, 600ms off)
+        if ((millis() % 1200) < 600) {
+            _tft.setTextColor(TFT_WHITE, TFT_BLACK);
+            _tft.drawString("START", cx, h - 38, 2);
+        }
+    } else if (isPaused) {
         _tft.setTextColor(TFT_WHITE, TFT_BLACK);
         _tft.drawString("PAUSED", cx, h - 38, 2);
     }

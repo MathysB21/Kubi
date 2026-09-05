@@ -43,6 +43,7 @@ void setupAPIRoutes(AsyncWebServer& server) {
         pomoObj["remaining"]     = pomodoro.getRemainingSeconds();
         pomoObj["total"]         = pomodoro.getTotalSeconds();
         pomoObj["isPaused"]      = pomodoro.isPaused();
+        pomoObj["isStarted"]     = pomodoro.isStarted();
         pomoObj["hasChimed"]     = pomodoro.hasChimed();
         pomoObj["cycle"]         = pomodoro.getCompletedCycles();
         pomoObj["cycleTarget"]   = pomodoro.getCycleTarget();

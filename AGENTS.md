@@ -104,6 +104,7 @@ Kubi uses **Software-in-the-Loop** simulation:
   - **View Persistence**: The user's digital vs. analog view choice is preserved in NVS Preferences (`"kubi_settings"` namespace, key `"clockAnalog"`) on hardware and in `kubi_sim_prefs.txt` in the simulator.
 * **Face 2: Pomodoro Timer**:
   - Focus and break countdowns with cycle tracking and customized phase colors.
+  - **Not Started / Idle State**: If the timer has not been started yet (or was reset), it does not count down; instead, it displays a slow retro arcade-style flashing `"START"` text (~1.2s period) in white. A gentle tap or dashboard Play starts the timer.
   - Gentle tap toggles pause/play. Shake gesture skips to next phase.
   - Minimal UI: Shows clean centered white "PAUSED" text when paused; no cluttering interaction instruction text.
   - **Pause State Persistence**: If the timer is paused, navigating to another face and returning preserves the paused state without auto-resuming.

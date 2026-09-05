@@ -222,6 +222,7 @@ void hardwareSimulationThread() {
                             pomodoro.getTotalSeconds(),
                             pomodoro.getPhaseName(),
                             pomodoro.isPaused(),
+                            pomodoro.isStarted(),
                             pomodoro.getPhaseColor(),
                             pomodoro.getCompletedCycles(),
                             pomodoro.getCycleTarget()
@@ -299,6 +300,7 @@ int main() {
         pomoObj["remaining"]     = pomodoro.getRemainingSeconds();
         pomoObj["total"]         = pomodoro.getTotalSeconds();
         pomoObj["isPaused"]      = pomodoro.isPaused();
+        pomoObj["isStarted"]     = pomodoro.isStarted();
         pomoObj["hasChimed"]     = pomodoro.hasChimed();
         pomoObj["cycle"]         = pomodoro.getCompletedCycles();
         pomoObj["cycleTarget"]   = pomodoro.getCycleTarget();

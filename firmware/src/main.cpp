@@ -378,6 +378,7 @@ void core1HardwareTask(void * parameter) {
               pomodoro.getTotalSeconds(),
               pomodoro.getPhaseName(),
               pomodoro.isPaused(),
+              pomodoro.isStarted(),
               pomodoro.getPhaseColor(),
               pomodoro.getCompletedCycles(),
               pomodoro.getCycleTarget()
