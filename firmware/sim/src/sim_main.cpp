@@ -115,6 +115,7 @@ void hardwareSimulationThread() {
                 if (currentMode == MODE_POMODORO) {
                     pomodoro.play();
                 }
+                clockShowDetails = false;
             }
         }
 
@@ -144,8 +145,6 @@ void hardwareSimulationThread() {
                             sim_last_chime_name = pomodoro.hasChimed() ? "CHIME_TAP_FEEDBACK" : "CHIME_TAP_FEEDBACK";
                             sim_last_chime_time = now;
                         } else if (currentMode == MODE_CLOCK_IDLE) {
-                            clockShowDetails = !clockShowDetails;
-                            clockDetailsTimeout = now + 10000;
                             audio.playChime(CHIME_TAP_FEEDBACK);
                             sim_last_chime_name = "CHIME_TAP_FEEDBACK";
                             sim_last_chime_time = now;
@@ -479,6 +478,7 @@ int main() {
                 if (currentMode == MODE_POMODORO) {
                     pomodoro.play();
                 }
+                clockShowDetails = false;
             }
         }
 

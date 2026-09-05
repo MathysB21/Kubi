@@ -98,7 +98,7 @@ void DisplayManager::drawBootScreen(const String& status) {
 }
 
 void DisplayManager::drawClockFace(int hour, int minute, int wday, int mday, int month, bool showDetails, bool isAnalog, const String& nextEvent, const String& ticker) {
-    if (isAnalog && !showDetails) {
+    if (isAnalog) {
         drawAnalogClockFace(hour, minute, wday, mday, month);
         return;
     }
@@ -120,39 +120,13 @@ void DisplayManager::drawClockFace(int hour, int minute, int wday, int mday, int
         snprintf(dateBuf, sizeof(dateBuf), "%s, %d %s", DAY_NAMES[wday], mday, MONTH_NAMES[month]);
     }
 
-    if (!showDetails) {
-        // Pure Minimalist Mode
-        _tft.setTextDatum(MC_DATUM);
-        _tft.setTextColor(TFT_WHITE, TFT_BLACK);
-        _tft.drawString(timeBuf, cx, cy, 7); // Large 7-segment digital font
+    // Pure Minimalist Mode
+    _tft.setTextDatum(MC_DATUM);
+    _tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    _tft.drawString(timeBuf, cx, cy, 7); // Large 7-segment digital font
 
-        if (dateBuf[0] != '\0') {
-            _tft.drawString(dateBuf, cx, cy + 40, 2);
-        }
-    } else {
-        // Tap Detailed Mode: Clock slides up to reveal calendar + ticker
-        _tft.setTextDatum(MC_DATUM);
-        _tft.setTextColor(TFT_WHITE, TFT_BLACK);
-        _tft.drawString(timeBuf, cx, cy - 45, 6);
-
-        // Divider
-        _tft.drawFastHLine(20, cy - 5, w - 40, TFT_DARKGREY);
-
-        // Next Event
-        _tft.setTextDatum(TL_DATUM);
-        _tft.setTextColor(TFT_GOLD, TFT_BLACK);
-        _tft.drawString("NEXT UP:", 20, cy + 10, 2);
-
-        _tft.setTextColor(TFT_WHITE, TFT_BLACK);
-        String eventDisplay = nextEvent.length() > 0 ? nextEvent : "No upcoming events";
-        _tft.drawString(eventDisplay, 20, cy + 32, 2);
-
-        // Ticker
-        if (ticker.length() > 0) {
-            _tft.drawFastHLine(20, h - 35, w - 40, TFT_DARKGREY);
-            _tft.setTextColor(TFT_CYAN, TFT_BLACK);
-            _tft.drawString(ticker, 20, h - 25, 2);
-        }
+    if (dateBuf[0] != '\0') {
+        _tft.drawString(dateBuf, cx, cy + 40, 2);
     }
 }
 

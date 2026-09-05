@@ -1,4 +1,4 @@
-﻿#include "SensorManager.h"
+#include "SensorManager.h"
 #include <math.h>
 
 #define I2C_SDA_PIN 21
@@ -160,9 +160,11 @@ void SensorManager::updateFace(float x, float y, float z) {
     if (detected != candidateFace) {
         candidateFace = detected;
         faceCandidateStartTime = millis();
+        _lastTapTime = millis(); // Suppress false tap detection during orientation flips
     } else if (millis() - faceCandidateStartTime > 400) {
         if (_activeFace != candidateFace && candidateFace <= 3) {
             _activeFace = candidateFace;
+            _lastTapTime = millis(); // Suppress tap when face settles
             Serial.printf("[ORIENTATION] Cube resting on Face %d UP\n", _activeFace + 1);
         }
     }

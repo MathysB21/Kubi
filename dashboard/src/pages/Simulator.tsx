@@ -407,7 +407,7 @@ export default function Simulator() {
                       id: 0,
                       title: "Face 1 UP",
                       mode: "Focus Clock",
-                      desc: "Minimal time, calendar & ticker",
+                      desc: "Minimal digital & analog clock with date",
                       icon: Clock,
                     },
                     {

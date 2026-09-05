@@ -295,6 +295,7 @@ void core1HardwareTask(void * parameter) {
         if (currentMode == MODE_POMODORO) {
           pomodoro.play();
         }
+        clockShowDetails = false;
       }
     }
 
@@ -314,8 +315,6 @@ void core1HardwareTask(void * parameter) {
               // Tap: Dismiss chime if ringing, else toggle Pause/Play
               pomodoro.handleTap();
             } else if (currentMode == MODE_CLOCK_IDLE) {
-              clockShowDetails = !clockShowDetails;
-              clockDetailsTimeout = now + 10000; // Auto collapse after 10s
               audio.playChime(CHIME_TAP_FEEDBACK);
             } else if (currentMode == MODE_SCHEDULE_AGENDA) {
               schedulePage = (schedulePage + 1) % 2; // Cycle page
