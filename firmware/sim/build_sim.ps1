@@ -12,7 +12,7 @@ Write-Host "==========================================" -ForegroundColor Cyan
 $clang = Get-Command "clang++.exe" -ErrorAction SilentlyContinue
 if (-not $clang) {
     # Fallback to winget path
-    $wingetClang = Get-ChildItem "C:\Users\Mathys\AppData\Local\Microsoft\WinGet\Packages" -Recurse -Filter "clang++.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+    $wingetClang = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Recurse -Filter "clang++.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($wingetClang) {
         $clang = $wingetClang.FullName
     } else {
