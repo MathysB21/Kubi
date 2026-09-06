@@ -313,3 +313,13 @@ int16_t TFT_eSPI::drawString(const String& string, int32_t poX, int32_t poY, uin
 
     return totalW;
 }
+
+int16_t TFT_eSPI::textWidth(const String& string, uint8_t font) {
+    int charW = 12;
+    if (font == 1) charW = 6;
+    else if (font == 2) charW = 12;
+    else if (font == 4) charW = 18;
+    else if (font == 6) charW = 30;
+    return (int16_t)(string.length() * charW);
+}
+

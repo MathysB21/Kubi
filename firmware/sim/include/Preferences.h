@@ -105,4 +105,20 @@ public:
         _save();
         return sizeof(bool);
     }
+
+    bool remove(const char* key) {
+        if (!key) return false;
+        _ensureLoaded();
+        auto& ns = _storage[_currentNamespace];
+        ns.erase(key);
+        _save();
+        return true;
+    }
+
+    bool clear() {
+        _ensureLoaded();
+        _storage[_currentNamespace].clear();
+        _save();
+        return true;
+    }
 };

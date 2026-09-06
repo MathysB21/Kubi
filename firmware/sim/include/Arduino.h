@@ -91,6 +91,11 @@ public:
     bool operator==(const char* rhs) const { return _str == (rhs ? rhs : ""); }
     bool operator!=(const String& rhs) const { return _str != rhs._str; }
     bool operator!=(const char* rhs) const { return _str != (rhs ? rhs : ""); }
+    bool operator<(const String& rhs) const { return _str < rhs._str; }
+    bool operator>(const String& rhs) const { return _str > rhs._str; }
+    bool operator<=(const String& rhs) const { return _str <= rhs._str; }
+    bool operator>=(const String& rhs) const { return _str >= rhs._str; }
+    bool operator<(const char* rhs) const { return _str < (rhs ? rhs : ""); }
 
     String operator+(const String& rhs) const { return String(_str + rhs._str); }
     String operator+(const char* rhs) const { return String(_str + (rhs ? rhs : "")); }

@@ -15,6 +15,7 @@
 #include "SensorManager.h"
 #include "AudioManager.h"
 #include "PomodoroManager.h"
+#include "ScheduleManager.h"
 #include "API.h"
 #include "ArduinoJson.h"
 
@@ -49,13 +50,7 @@ volatile float diagAccelX = 0.0f;
 volatile float diagAccelY = 0.0f;
 volatile float diagAccelZ = 9.8f;
 
-static std::vector<String> cachedAgenda = {
-    "Today 10:00 - Team Sync",
-    "Today 14:00 - Design Review",
-    "Tomorrow 09:30 - Sprint Planning",
-    "Fri 18:00 - Wilhelm's 21st Party!"
-};
-static int schedulePage = 0;
+// --- CLOCK SETTINGS ---
 static bool clockShowDetails = false;
 static bool clockAnalogView = false;
 static uint32_t clockDetailsTimeout = 0;
@@ -167,7 +162,7 @@ void hardwareSimulationThread() {
                             sim_last_chime_name = "CHIME_TAP_FEEDBACK";
                             sim_last_chime_time = now;
                         } else if (currentMode == MODE_SCHEDULE_AGENDA) {
-                            schedulePage = (schedulePage + 1) % 2;
+                            schedule.handleTap();
                             audio.playChime(CHIME_TAP_FEEDBACK);
                             sim_last_chime_name = "CHIME_TAP_FEEDBACK";
                             sim_last_chime_time = now;
@@ -188,6 +183,12 @@ void hardwareSimulationThread() {
                             sim_last_chime_name = "CHIME_TAP_FEEDBACK";
                             sim_last_chime_time = now;
                             std::cout << "[SIM CLOCK] Shake toggled view -> " << (clockAnalogView ? "analog" : "digital") << " (saved to Preferences)" << std::endl;
+                        } else if (currentMode == MODE_SCHEDULE_AGENDA) {
+                            schedule.handleShake();
+                            audio.playChime(CHIME_TAP_FEEDBACK);
+                            sim_last_chime_name = "CHIME_TAP_FEEDBACK";
+                            sim_last_chime_time = now;
+                            std::cout << "[SIM SCHEDULE] Shake jumped to today" << std::endl;
                         }
                         break;
 
@@ -250,7 +251,7 @@ void hardwareSimulationThread() {
                         break;
 
                     case MODE_SCHEDULE_AGENDA:
-                        display.drawScheduleFace(cachedAgenda, schedulePage);
+                        display.drawScheduleFace(schedule.getCurrentDayTitle(), schedule.getCurrentPageItems(), schedule.hasIcs(), schedule.hasEvents());
                         break;
 
                     default:
@@ -285,6 +286,7 @@ int main() {
     sensors.init();
     audio.init();
     pomodoro.init();
+    schedule.init();
 
     // 2. Start hardware simulation loop
     std::thread hwThread(hardwareSimulationThread);
@@ -309,6 +311,9 @@ int main() {
         doc["temp"] = roomTemperature;
         doc["battery"] = batteryPercentage;
         doc["icalUrl"] = secretIcalUrl.c_str();
+        doc["hasIcs"] = schedule.hasIcs();
+        doc["hasEvents"] = schedule.hasEvents();
+        doc["scheduleDay"] = schedule.getCurrentDayTitle().c_str();
 
         JsonObject pomoObj = doc["pomodoro"].to<JsonObject>();
         pomoObj["phase"]         = (int)pomodoro.getPhase();
@@ -358,6 +363,7 @@ int main() {
 
         if (jsonObj["icalUrl"].is<const char*>()) {
             secretIcalUrl = jsonObj["icalUrl"].as<const char*>();
+            schedule.setIcsUrl(secretIcalUrl);
         }
 
         int focus = pomodoro.getFocusMinutes();
@@ -473,7 +479,36 @@ int main() {
     });
 
     // -------------------------------------------------------------------------
-    // 6. GET /sim/frame (Raw 32-bit RGBA Framebuffer: 240 x 320 x 4 = 307,200 bytes)
+    // 6. Calendar Management Endpoints
+    // -------------------------------------------------------------------------
+    svr.Post("/api/calendar/ics", [](const httplib::Request& req, httplib::Response& res) {
+        addCors(res);
+        JsonDocument json;
+        DeserializationError err = deserializeJson(json, req.body);
+        if (err || !json["ics"].is<const char*>()) {
+            res.status = 400;
+            res.set_content("{\"error\":\"invalid or missing ics\"}", "application/json");
+            return;
+        }
+        schedule.setIcsContent(json["ics"].as<const char*>());
+        res.set_content("{\"status\":\"ics_saved\"}", "application/json");
+    });
+
+    svr.Post("/api/calendar/sample", [](const httplib::Request& req, httplib::Response& res) {
+        addCors(res);
+        schedule.loadSampleSchedule();
+        res.set_content("{\"status\":\"sample_loaded\"}", "application/json");
+    });
+
+    svr.Delete("/api/calendar", [](const httplib::Request& req, httplib::Response& res) {
+        addCors(res);
+        schedule.clearIcs();
+        secretIcalUrl = "";
+        res.set_content("{\"status\":\"calendar_cleared\"}", "application/json");
+    });
+
+    // -------------------------------------------------------------------------
+    // 7. GET /sim/frame (Raw 32-bit RGBA Framebuffer: 240 x 320 x 4 = 307,200 bytes)
     // -------------------------------------------------------------------------
     svr.Get("/sim/frame", [](const httplib::Request& req, httplib::Response& res) {
         addCors(res);

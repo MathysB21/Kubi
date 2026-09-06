@@ -255,6 +255,7 @@ public:
     }
 
     int16_t drawString(const String& string, int32_t poX, int32_t poY, uint8_t font);
+    int16_t textWidth(const String& string, uint8_t font = 2);
 
 private:
     void drawCircleHelper(int32_t x0, int32_t y0, int32_t r, uint8_t cornername, uint16_t color);
