@@ -313,6 +313,7 @@ Kubi/
 │   ├── package.json
 │   └── vite.config.ts          # Vite build config (outputs to firmware/data/)
 ├── docs/                       # Specifications, wiring diagrams, knowledge base
+│   ├── Animation and Storage Optimization Guide.md # Memory math & diorama design
 │   ├── Kubi Specifications.md  # Original product specifications
 │   ├── Kubi Architecture and Wiring Guide.md # Hardware wiring blueprint
 │   ├── PROJECT_KNOWLEDGE.md    # Comprehensive engineering knowledge base
@@ -339,7 +340,8 @@ Kubi/
 │   │   ├── ScheduleManager.cpp / ScheduleManager.h
 │   │   └── SensorManager.cpp / SensorManager.h
 │   └── tools/
-│       └── build_sprites.py    # Pillow pre-build sprite slicer into PROGMEM
+│       ├── build_sprites.py    # Pillow pre-build sprite slicer into PROGMEM
+│       └── slice_spritesheet.py# Spritesheet slicing & animation generator
 ├── AGENTS.md                   # AI agent instructions & SITL quick reference
 └── README.md                   # Project overview & documentation (this file)
 ```
@@ -350,6 +352,8 @@ Kubi/
 
 Detailed design histories, state machine specifications, bug post-mortems, and hardware optimizations are maintained in [`docs/knowledge/`](docs/knowledge/index.md):
 
+* [`2026-09-06: Diegetic Mascot Dioramas & Contextual Temperature Anchors`](docs/knowledge/2026-09-06-diegetic-mascot-dioramas-and-temperature-anchors.md)
+* [`2026-09-06: Spritesheet Slicer Tool, Variable-Column Rows & Animation Pipeline`](docs/knowledge/2026-09-06-spritesheet-slicer-and-animation-pipeline.md)
 * [`2026-09-06: Schedule Pagination & Gesture Navigation`](docs/knowledge/2026-09-06-schedule-pagination-and-gesture-navigation.md)
 * [`2026-09-06: Embedded Finance Ticker & Dual-Side Clipping Masks`](docs/knowledge/2026-09-06-embedded-finance-ticker-and-clipping-masks.md)
 * [`2026-09-06: Schedule Face RFC-5545 Calendar Parser & Empty States`](docs/knowledge/2026-09-06-schedule-face-calendar-parser-and-empty-states.md)
@@ -360,6 +364,7 @@ Detailed design histories, state machine specifications, bug post-mortems, and h
 * [`2026-09-05: Audio Chimes & Long Break Fanfare`](docs/knowledge/2026-09-05-audio-chimes-and-long-break-fanfare.md)
 * [`2026-09-05: Pomodoro Idle State & Pause Persistence`](docs/knowledge/2026-09-05-pomodoro-idle-start-and-persistence.md)
 * [`2026-09-05: Focus Clock Analog Toggle & NVS Persistence`](docs/knowledge/2026-09-05-focus-clock-analog-toggle-and-nvs-persistence.md)
+
 
 ---
 
