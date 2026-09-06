@@ -15,6 +15,9 @@ import {
   RotateCcw,
   Sliders,
   Palette,
+  Upload,
+  Trash2,
+  FileText,
 } from "lucide-react";
 import { Accordion } from "./components/Accordion";
 import {
@@ -54,6 +57,9 @@ interface KubiState {
   temp: number;
   battery: number;
   icalUrl: string;
+  hasIcs?: boolean;
+  hasEvents?: boolean;
+  scheduleDay?: string;
   isNightMode: boolean;
   planetDawnH: number;
   planetDawnM: number;
@@ -191,6 +197,73 @@ function KubiDashboard() {
       toast.error("Pomodoro action failed");
     },
   });
+
+  const handleUploadIcs = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const text = reader.result as string;
+      try {
+        const res = await fetch("/api/calendar/ics", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ics: text }),
+        });
+        if (res.ok) {
+          qc.invalidateQueries({ queryKey: ["kubiState"] });
+          toast.success("ICS calendar uploaded & parsed!");
+        } else {
+          toast.error("Failed to parse ICS file");
+        }
+      } catch {
+        toast.error("Could not upload ICS file");
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
+  const handleLoadSample = async () => {
+    try {
+      const res = await fetch("/api/calendar/sample", { method: "POST" });
+      if (res.ok) {
+        qc.invalidateQueries({ queryKey: ["kubiState"] });
+        toast.success("Rich sample schedule loaded (>4 items, ticker)!");
+      }
+    } catch {
+      toast.error("Could not load sample schedule");
+    }
+  };
+
+  const handleClearCalendar = async () => {
+    try {
+      const res = await fetch("/api/calendar", { method: "DELETE" });
+      if (res.ok) {
+        setIcalInput("");
+        qc.invalidateQueries({ queryKey: ["kubiState"] });
+        toast.success("Calendar cleared ('No calendar connected, that's sad')");
+      }
+    } catch {
+      toast.error("Could not clear calendar");
+    }
+  };
+
+  const handleEmptyCalendar = async () => {
+    try {
+      const res = await fetch("/api/calendar/ics", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ics: "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR" }),
+      });
+      if (res.ok) {
+        qc.invalidateQueries({ queryKey: ["kubiState"] });
+        toast.success("Empty calendar set ('Nothing happening, I guess')");
+      }
+    } catch {
+      toast.error("Could not set empty calendar");
+    }
+  };
 
   const activeFace = FACE_MODES[data.mode] || FACE_MODES[0];
   const pomo = data.pomodoro || DEFAULT_STATE.pomodoro;
@@ -592,30 +665,84 @@ function KubiDashboard() {
 
         {/* 2. GOOGLE CALENDAR ICAL SYNC */}
         <section className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-xl space-y-4">
-          <div className="flex items-center gap-2 mb-1">
-            <Calendar size={18} className="text-amber-500" />
-            <h2 className="text-lg font-medium text-zinc-100">Google Calendar Sync</h2>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Calendar size={18} className="text-pink-400" />
+              <h2 className="text-lg font-medium text-zinc-100">Google Calendar Sync</h2>
+            </div>
+            {!data.hasIcs ? (
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono bg-zinc-800 text-zinc-400 border border-zinc-700">
+                No calendar connected, that's sad
+              </span>
+            ) : !data.hasEvents ? (
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                Nothing happening, I guess
+              </span>
+            ) : (
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono bg-pink-500/10 text-pink-400 border border-pink-500/30 font-semibold">
+                {data.scheduleDay || "Schedule Active"}
+              </span>
+            )}
           </div>
           <p className="text-zinc-500 text-xs leading-relaxed">
-            Paste your private iCal (.ics) link from Google Calendar settings. Kubi syncs upcoming events every hour.
+            Paste your private iCal (.ics) link or upload a local .ics file. Kubi displays up to 5 days of events with marquee ticker animations for long items.
           </p>
           <div className="space-y-2">
-            <input
-              type="text"
-              placeholder="https://calendar.google.com/calendar/ical/.../basic.ics"
-              value={icalInput || data.icalUrl}
-              onChange={(e) => setIcalInput(e.target.value)}
-              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-xs text-zinc-200 placeholder-zinc-700 focus:outline-none focus:border-amber-500/50"
-            />
-            <button
-              onClick={() => {
-                mutation.mutate({ icalUrl: icalInput });
-                toast.success("Calendar URL saved");
-              }}
-              className="w-full py-2.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 border border-amber-500/30 rounded-xl text-xs font-medium transition-colors cursor-pointer"
-            >
-              Save &amp; Sync Calendar
-            </button>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder="https://calendar.google.com/calendar/ical/.../basic.ics"
+                value={icalInput || data.icalUrl}
+                onChange={(e) => setIcalInput(e.target.value)}
+                className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-xs text-zinc-200 placeholder-zinc-700 focus:outline-none focus:border-pink-500/50"
+              />
+              <button
+                onClick={() => {
+                  mutation.mutate({ icalUrl: icalInput });
+                  toast.success("Calendar URL saved");
+                }}
+                className="px-5 py-2.5 bg-pink-500/10 hover:bg-pink-500/20 text-pink-400 border border-pink-500/30 rounded-xl text-xs font-semibold transition-colors cursor-pointer shrink-0"
+              >
+                Save URL
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
+              <label className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 text-xs font-medium cursor-pointer transition-colors">
+                <Upload size={13} className="text-pink-400" />
+                <span>Upload .ics</span>
+                <input type="file" accept=".ics,text/calendar" onChange={handleUploadIcs} className="hidden" />
+              </label>
+
+              <button
+                type="button"
+                onClick={handleLoadSample}
+                className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 text-xs font-medium transition-colors cursor-pointer"
+                title="Loads a rich test schedule with >4 items today and long ticker titles"
+              >
+                <FileText size={13} className="text-amber-400" />
+                <span>Load Sample</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleEmptyCalendar}
+                className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 text-xs font-medium transition-colors cursor-pointer"
+                title="Sets an empty calendar to test 'Nothing happening, I guess'"
+              >
+                <span>Empty Cal</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleClearCalendar}
+                className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-800/80 hover:bg-rose-500/20 text-zinc-400 hover:text-rose-400 border border-zinc-700 hover:border-rose-500/30 text-xs font-medium transition-colors cursor-pointer"
+                title="Clears all calendar data to test 'No calendar connected, that's sad'"
+              >
+                <Trash2 size={13} />
+                <span>Clear ICS</span>
+              </button>
+            </div>
           </div>
         </section>
 
