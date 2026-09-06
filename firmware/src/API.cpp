@@ -5,6 +5,7 @@
 #include <LittleFS.h>
 #include <WiFi.h>
 #include "PomodoroManager.h"
+#include "ScheduleManager.h"
 
 // --- SHARED GLOBALS (Defined in main.cpp) ---
 extern volatile KubiMode currentMode;
@@ -35,6 +36,9 @@ void setupAPIRoutes(AsyncWebServer& server) {
         doc["temp"] = roomTemperature;
         doc["battery"] = batteryPercentage;
         doc["icalUrl"] = secretIcalUrl;
+        doc["hasIcs"] = schedule.hasIcs();
+        doc["hasEvents"] = schedule.hasEvents();
+        doc["scheduleDay"] = schedule.getCurrentDayTitle();
 
         // Detailed Pomodoro State
         JsonObject pomoObj = doc["pomodoro"].to<JsonObject>();
@@ -82,6 +86,7 @@ void setupAPIRoutes(AsyncWebServer& server) {
             prefs.begin("kubi_settings", false);
             prefs.putString("icalUrl", secretIcalUrl);
             prefs.end();
+            schedule.setIcsUrl(secretIcalUrl);
         }
 
         // 3. Pomodoro Durations
@@ -195,7 +200,33 @@ void setupAPIRoutes(AsyncWebServer& server) {
     });
 
     // =========================================================================
-    // 6. SERVE STATIC REACT FRONTEND FROM LITTLEFS
+    // 6. CALENDAR API ROUTES
+    // =========================================================================
+    AsyncCallbackJsonWebHandler* calendarUploadHandler = new AsyncCallbackJsonWebHandler("/api/calendar/ics", [](AsyncWebServerRequest *request, JsonVariant &json) {
+        JsonObject jsonObj = json.as<JsonObject>();
+        if (jsonObj["ics"].is<const char*>()) {
+            String icsData = jsonObj["ics"].as<String>();
+            schedule.setIcsContent(icsData);
+            request->send(200, "application/json", "{\"status\":\"ics_saved\"}");
+        } else {
+            request->send(400, "application/json", "{\"error\":\"missing ics field\"}");
+        }
+    });
+    server.addHandler(calendarUploadHandler);
+
+    server.on("/api/calendar/sample", HTTP_POST, [](AsyncWebServerRequest *request) {
+        schedule.loadSampleSchedule();
+        request->send(200, "application/json", "{\"status\":\"sample_loaded\"}");
+    });
+
+    server.on("/api/calendar", HTTP_DELETE, [](AsyncWebServerRequest *request) {
+        schedule.clearIcs();
+        secretIcalUrl = "";
+        request->send(200, "application/json", "{\"status\":\"calendar_cleared\"}");
+    });
+
+    // =========================================================================
+    // 7. SERVE STATIC REACT FRONTEND FROM LITTLEFS
     // Default file: index.html
     // =========================================================================
     server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");

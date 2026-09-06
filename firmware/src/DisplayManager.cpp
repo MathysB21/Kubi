@@ -1,4 +1,5 @@
 #include "DisplayManager.h"
+#include "ScheduleManager.h"
 #include <cmath>
 
 #define BACKLIGHT_PIN 32
@@ -333,42 +334,119 @@ void DisplayManager::drawMascotFace(float temperature, int hourOfDay) {
     _tft.drawString("Room Temperature", cx, h - 20, 2);
 }
 
-void DisplayManager::drawScheduleFace(const std::vector<String>& events, int page) {
+void DisplayManager::drawScheduleFace(const String& dayTitle, const std::vector<ScheduleItem>& items, bool hasIcs, bool hasEvents) {
     int w = _tft.width();
     int h = _tft.height();
     int cx = w / 2;
 
     _tft.fillScreen(TFT_BLACK);
 
+    // 1. Pink Schedule Header Text
     _tft.setTextDatum(TC_DATUM);
-    _tft.setTextColor(TFT_GOLD, TFT_BLACK);
-    _tft.drawString("SCHEDULE (3 DAYS)", cx, 12, 2);
-    _tft.drawFastHLine(20, 32, w - 40, TFT_DARKGREY);
+    _tft.setTextColor(TFT_PINK, TFT_BLACK);
+    _tft.drawString(dayTitle.length() > 0 ? dayTitle : "Schedule (today)", cx, 10, 2);
+    _tft.drawFastHLine(20, 28, w - 40, TFT_DARKGREY);
 
-    if (events.empty()) {
+    // 2. Empty State 1: No calendar connected
+    if (!hasIcs) {
         _tft.setTextDatum(MC_DATUM);
-        _tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-        _tft.drawString("No upcoming events", cx, h / 2 - 10, 2);
-        _tft.drawString("Sync via kubi.local", cx, h / 2 + 15, 2);
+        _tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+        _tft.drawString("No calendar connected,", cx, h / 2 - 12, 2);
+        _tft.drawString("that's sad", cx, h / 2 + 12, 2);
         return;
     }
 
-    int maxItems = (h > 260) ? 4 : 3;
-    int cardH = (h > 260) ? 46 : 38;
-    int startIdx = page * maxItems;
-    int y = 42;
-    _tft.setTextDatum(TL_DATUM);
+    // 3. Empty State 2: ICS exists but no events / empty
+    if (!hasEvents || items.empty()) {
+        _tft.setTextDatum(MC_DATUM);
+        _tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+        _tft.drawString("Nothing happening,", cx, h / 2 - 12, 2);
+        _tft.drawString("I guess", cx, h / 2 + 12, 2);
+        return;
+    }
 
-    for (size_t i = startIdx; i < events.size() && i < (size_t)(startIdx + maxItems); i++) {
-        _tft.fillRoundRect(15, y, w - 30, cardH, 8, 0x18E3); // Dark card background
-        _tft.setTextColor(TFT_WHITE, 0x18E3);
-        _tft.drawString(events[i], 25, y + (cardH / 2) - 6, 2);
-        y += cardH + 8;
+    // 4. List items (up to 4 items on screen)
+    int cardH = 38;
+    int gap = 6;
+    int startY = 34;
+    int cardW = w - 30;
+
+    for (size_t row = 0; row < items.size() && row < 4; row++) {
+        int y = startY + (int)row * (cardH + gap);
+
+        // Dark card background
+        _tft.fillRoundRect(15, y, cardW, cardH, 8, 0x18E3);
+
+        String timePrefix = items[row].time.length() > 0 ? (items[row].time + " - ") : "";
+        int prefixW = _tft.textWidth(timePrefix, 2);
+        int nameStartX = 25 + prefixW;
+        int nameEndX = w - 25;
+        int availW = nameEndX - nameStartX;
+        if (availW < 50) availW = 50;
+
+        String name = items[row].name;
+        int nameW = _tft.textWidth(name, 2);
+        int textY = y + 11;
+
+        if (nameW <= availW) {
+            // Fits within card: static rendering
+            _tft.setTextDatum(TL_DATUM);
+            _tft.setTextColor(TFT_WHITE, 0x18E3);
+            if (timePrefix.length() > 0) {
+                _tft.drawString(timePrefix, 25, textY, 2);
+            }
+            _tft.drawString(name, nameStartX, textY, 2);
+        } else {
+            // Does NOT fit: moves left like a finance ticker while time & dash stay static
+            String spacer = "      ";
+            String unitStr = name + spacer;
+            int unitW = _tft.textWidth(unitStr, 2);
+            if (unitW <= 0) unitW = 100;
+
+            int offset = ((millis() / 35)) % unitW;
+            String tickerStr = unitStr + unitStr;
+
+            _tft.setTextDatum(TL_DATUM);
+            _tft.setTextColor(TFT_WHITE, 0x18E3);
+            _tft.drawString(tickerStr, nameStartX - offset, textY, 2);
+
+            // Left mask: over the time area so scrolling text does not bleed over time
+            _tft.fillRect(15, y, nameStartX - 15, cardH, 0x18E3);
+            if (timePrefix.length() > 0) {
+                _tft.drawString(timePrefix, 25, textY, 2);
+            }
+
+            // Right mask: over card right boundary
+            if (nameEndX < w - 15) {
+                _tft.fillRect(nameEndX, y, (w - 15) - nameEndX, cardH, 0x18E3);
+            }
+
+            // Screen margin masks outside card
+            _tft.fillRect(0, y, 15, cardH, TFT_BLACK);
+            _tft.fillRect(w - 15, y, 15, cardH, TFT_BLACK);
+        }
     }
 
     _tft.setTextDatum(BC_DATUM);
     _tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-    _tft.drawString("Tap to cycle agenda", cx, h - 10, 1);
+    _tft.drawString("Tap to cycle / Shake for today", cx, h - 4, 1);
+}
+
+void DisplayManager::drawScheduleFace(const std::vector<String>& events, int page) {
+    std::vector<ScheduleItem> items;
+    for (const auto& ev : events) {
+        int dash = ev.indexOf(" - ");
+        ScheduleItem item;
+        if (dash >= 0) {
+            item.time = ev.substring(0, dash);
+            item.name = ev.substring(dash + 3);
+        } else {
+            item.time = "";
+            item.name = ev;
+        }
+        items.push_back(item);
+    }
+    drawScheduleFace("Schedule (today)", items, true, !items.empty());
 }
 
 void DisplayManager::drawOverrideAlert(const String& message) {

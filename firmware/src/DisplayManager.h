@@ -3,6 +3,8 @@
 #include <TFT_eSPI.h>
 #include <vector>
 
+struct ScheduleItem;
+
 // Kubi Display Manager for 2.0" 240x320 IPS (ST7789 via SPI)
 class DisplayManager {
 public:
@@ -26,6 +28,7 @@ public:
     void drawAnalogClockFace(int hour, int minute, int wday = -1, int mday = 1, int month = 0);
     void drawPomodoroFace(int remainingSeconds, int totalSeconds, const char* phaseName, bool isPaused, bool isStarted, uint16_t textColor, int currentCycle = 0, int cycleTarget = 4);
     void drawMascotFace(float temperature, int hourOfDay);
+    void drawScheduleFace(const String& dayTitle, const std::vector<ScheduleItem>& items, bool hasIcs, bool hasEvents);
     void drawScheduleFace(const std::vector<String>& events, int page = 0);
     void drawOverrideAlert(const String& message);
 

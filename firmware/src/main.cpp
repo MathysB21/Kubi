@@ -14,6 +14,7 @@
 #include "SensorManager.h"
 #include "AudioManager.h"
 #include "PomodoroManager.h"
+#include "ScheduleManager.h"
 #include <vector>
 
 // =============================================================================
@@ -33,9 +34,7 @@ volatile float diagAccelX = 0.0f;
 volatile float diagAccelY = 0.0f;
 volatile float diagAccelZ = 1.0f;
 
-// --- SCHEDULE CACHE ---
-static std::vector<String> cachedAgenda;
-static int schedulePage = 0;
+// --- CLOCK SETTINGS ---
 static bool clockShowDetails = false;
 bool clockAnalogView = false;
 static uint32_t clockDetailsTimeout = 0;
@@ -314,7 +313,7 @@ void core1HardwareTask(void * parameter) {
             } else if (currentMode == MODE_CLOCK_IDLE) {
               audio.playChime(CHIME_TAP_FEEDBACK);
             } else if (currentMode == MODE_SCHEDULE_AGENDA) {
-              schedulePage = (schedulePage + 1) % 2; // Cycle page
+              schedule.handleTap();
               audio.playChime(CHIME_TAP_FEEDBACK);
             }
             break;
@@ -330,6 +329,10 @@ void core1HardwareTask(void * parameter) {
               preferences.end();
               audio.playChime(CHIME_TAP_FEEDBACK);
               Serial.printf("[CLOCK] Shake detected -> Switched to %s clock view (saved to NVS)\n", clockAnalogView ? "analog" : "digital");
+            } else if (currentMode == MODE_SCHEDULE_AGENDA) {
+              schedule.handleShake();
+              audio.playChime(CHIME_TAP_FEEDBACK);
+              Serial.println("[SCHEDULE] Shake detected -> Jumped to today");
             }
             break;
 
@@ -390,7 +393,7 @@ void core1HardwareTask(void * parameter) {
             break;
 
           case MODE_SCHEDULE_AGENDA:
-            display.drawScheduleFace(cachedAgenda, schedulePage);
+            display.drawScheduleFace(schedule.getCurrentDayTitle(), schedule.getCurrentPageItems(), schedule.hasIcs(), schedule.hasEvents());
             break;
 
           default:
@@ -464,11 +467,8 @@ void setup() {
     Serial.println("[NTP] Time successfully synchronized.");
   }
 
-  // Seed sample schedule items
-  cachedAgenda.push_back("Today 10:00 - Team Sync");
-  cachedAgenda.push_back("Today 14:00 - Design Review");
-  cachedAgenda.push_back("Tomorrow 09:30 - Sprint Planning");
-  cachedAgenda.push_back("Fri 18:00 - Wilhelm's 21st Party!");
+  // 9. Initialize Schedule Manager
+  schedule.init();
 
   // 9. Attach REST API Routes & Start Web Server
   setupAPIRoutes(server);
