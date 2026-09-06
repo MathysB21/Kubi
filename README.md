@@ -314,6 +314,7 @@ Kubi/
 │   └── vite.config.ts          # Vite build config (outputs to firmware/data/)
 ├── docs/                       # Specifications, wiring diagrams, knowledge base
 │   ├── Animation and Storage Optimization Guide.md # Memory math & diorama design
+│   ├── Artist Guide.md         # Canvas sizes, layering & diegetic UI guide
 │   ├── Kubi Specifications.md  # Original product specifications
 │   ├── Kubi Architecture and Wiring Guide.md # Hardware wiring blueprint
 │   ├── PROJECT_KNOWLEDGE.md    # Comprehensive engineering knowledge base
