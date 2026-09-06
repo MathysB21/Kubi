@@ -127,3 +127,43 @@ The `spiffs` (LittleFS) partition currently has **1.36 MB of completely unused f
 * Because pixel art uses a restricted palette (16–32 colors) and large flat color regions, an animated `.gif` compresses by **80%–90%** compared to raw RGB565.
 * A 6-frame $64\times 64$ pixel art GIF is typically only **4 KB to 8 KB in total file size** (compared to 49 KB raw).
 * By decoding GIFs from LittleFS using an embedded decoder (e.g. `AnimatedGIF`), **over 150 animations** can be stored in the remaining 1.36 MB without touching firmware code space.
+
+---
+
+## 6. Implementation Status & Planned Optimization Roadmap
+
+To keep development agile, optimizations are scheduled progressively as artwork is introduced:
+
+### Current Implementation Status
+| Feature / Optimization | Status | Notes |
+| :--- | :---: | :--- |
+| **Zero-RAM Compilation (`PROGMEM`)** | ✅ **Active** | `build_sprites.py` emits flash arrays; 0 bytes dynamic RAM used. |
+| **Automated SCons Build Hook** | ✅ **Active** | Recompiles sprites before PlatformIO builds without manual C++ edits. |
+| **Multi-Tier Spritesheet Slicer** | ✅ **Active** | `slice_spritesheet.py` with variable columns, presets, and scaling. |
+| **RGB565 Raw Conversion** | ✅ **Active** | 16-bit color mapped from 8-bit RGBA. |
+| **Automatic Transparency Bounding-Box Cropping** | ⏳ *Planned* | Slices empty transparent padding off foreground overlays (Strategy A). |
+| **Indexed Palette Compression (4-bit/8-bit)** | ⏳ *Planned* | Reduces pixel data by 50% to 75% using color lookup tables (Strategy B). |
+| **LittleFS PNG/GIF Streaming Decoder** | ⏳ *Planned* | Decodes compressed PNG/GIF files directly from LittleFS flash (Strategy C). |
+
+### Planned Compression Strategies (Detailed)
+
+#### Strategy A: Automatic Bounding-Box & Transparency Stripping
+* **The Problem**: In foreground overlays like `desk_foreground.png`, the entire upper portion of the screen above the desk surface is transparent. Saving a full $240 \times 320$ array wastes over $100\text{ KB}$ storing invisible pixels.
+* **The Solution**: Update `build_sprites.py` to calculate the non-transparent pixel bounding box `(min_x, min_y, max_x, max_y)`. Only the active rectangle (e.g. $240 \times 90$) is converted to byte data, alongside its `(offset_x, offset_y)` placement coordinates.
+* **Projected Savings**: Slashes foreground overlays from **$153.6\text{ KB}$ down to $\approx 25\text{ KB}$** (an **80%+ reduction**).
+
+#### Strategy B: Indexed Color / Palette Compression (4-bit & 8-bit)
+* **The Problem**: Raw RGB565 allocates 16 bits (2 bytes) per pixel even though pixel art typically uses only 16 to 32 unique colors.
+* **The Solution**: 
+  1. Extract a small palette lookup table (e.g. 16 colors = 32 bytes; 256 colors = 512 bytes).
+  2. Store each pixel as an index pointer: **4 bits** (0.5 byte/pixel) or **8 bits** (1 byte/pixel).
+  3. The display engine expands the index via palette lookup during SPI DMA transfer.
+* **Projected Savings**:
+  * 8-bit Indexed: **$76.8\text{ KB}$** per full-screen frame (50% reduction).
+  * 4-bit Indexed: **$38.4\text{ KB}$** per full-screen frame (75% reduction).
+
+#### Strategy C: Direct LittleFS Compressed Asset Streaming
+* **The Problem**: Firmware binary space in `app0` has a 2.0MB partition ceiling.
+* **The Solution**: Place raw `.png` and `.gif` files directly into LittleFS (`firmware/data/scenes/`), which currently has **1.36 MB of completely unused flash**. Use an embedded streaming decoder (e.g. `AnimatedGIF` or `PNGdec`) to decompress frames directly into the ST7789 display buffer on the fly.
+* **Projected Savings**: Allows **over 30 complete full-screen animated living rooms** to fit on the device without touching code flash.
+
