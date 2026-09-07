@@ -50,10 +50,11 @@ volatile float diagAccelX = 0.0f;
 volatile float diagAccelY = 0.0f;
 volatile float diagAccelZ = 9.8f;
 
-// --- CLOCK SETTINGS ---
+// --- CLOCK & SCENE SETTINGS ---
 static bool clockShowDetails = false;
 static bool clockAnalogView = false;
 static uint32_t clockDetailsTimeout = 0;
+static int mascotSceneIndex = 0;
 
 // Helper: Convert 16-bit RGB565 to 32-bit RGBA (for web canvas)
 static void convertRGB565toRGBA32(const uint16_t* src, uint8_t* dst, int count) {
@@ -166,6 +167,12 @@ void hardwareSimulationThread() {
                             audio.playChime(CHIME_TAP_FEEDBACK);
                             sim_last_chime_name = "CHIME_TAP_FEEDBACK";
                             sim_last_chime_time = now;
+                        } else if (currentMode == MODE_MASCOT_ROUTINE) {
+                            mascotSceneIndex = (mascotSceneIndex + 1) % 10;
+                            audio.playChime(CHIME_TAP_FEEDBACK);
+                            sim_last_chime_name = "CHIME_TAP_FEEDBACK";
+                            sim_last_chime_time = now;
+                            std::cout << "[SIM MASCOT] Tap -> Next scene: " << mascotSceneIndex << std::endl;
                         }
                         break;
 
@@ -189,6 +196,12 @@ void hardwareSimulationThread() {
                             sim_last_chime_name = "CHIME_TAP_FEEDBACK";
                             sim_last_chime_time = now;
                             std::cout << "[SIM SCHEDULE] Shake jumped to today" << std::endl;
+                        } else if (currentMode == MODE_MASCOT_ROUTINE) {
+                            mascotSceneIndex = (mascotSceneIndex - 1 + 10) % 10;
+                            audio.playChime(CHIME_TAP_FEEDBACK);
+                            sim_last_chime_name = "CHIME_TAP_FEEDBACK";
+                            sim_last_chime_time = now;
+                            std::cout << "[SIM MASCOT] Shake -> Prev scene: " << mascotSceneIndex << std::endl;
                         }
                         break;
 
@@ -247,7 +260,7 @@ void hardwareSimulationThread() {
                         break;
 
                     case MODE_MASCOT_ROUTINE:
-                        display.drawMascotFace(roomTemperature, currentHour);
+                        display.drawMascotFace(roomTemperature, currentHour, mascotSceneIndex, true);
                         break;
 
                     case MODE_SCHEDULE_AGENDA:
@@ -335,6 +348,7 @@ int main() {
         doc["pomodoroFocus"] = pomodoro.getFocusMinutes();
         doc["pomodoroBreak"] = pomodoro.getShortBreakMinutes();
         doc["clockAnalog"] = clockAnalogView;
+        doc["mascotScene"] = mascotSceneIndex;
 
         std::string jsonStr;
         serializeJson(doc, jsonStr);
@@ -402,6 +416,11 @@ int main() {
             prefs.begin("kubi_settings", false);
             prefs.putBool("clockAnalog", clockAnalogView);
             prefs.end();
+        }
+
+        if (jsonObj["mascotScene"].is<int>()) {
+            mascotSceneIndex = jsonObj["mascotScene"].as<int>() % 10;
+            if (mascotSceneIndex < 0) mascotSceneIndex += 10;
         }
 
         res.set_content("{\"status\":\"success\"}", "application/json");
@@ -565,6 +584,13 @@ int main() {
             std::this_thread::sleep_for(std::chrono::milliseconds(15));
         }
 
+        // Mascot Idle Scene Selection
+        if (obj["mascotScene"].is<int>()) {
+            mascotSceneIndex = obj["mascotScene"].as<int>() % 10;
+            if (mascotSceneIndex < 0) mascotSceneIndex += 10;
+            std::cout << "[SIM MASCOT] Injected scene index: " << mascotSceneIndex << std::endl;
+        }
+
         JsonDocument respDoc;
         respDoc["status"] = "injected";
         respDoc["lastChime"] = sim_last_chime_name;
@@ -593,6 +619,7 @@ int main() {
         doc["isSleeping"] = display.isSleeping();
         doc["mode"] = (int)currentMode;
         doc["isAnalog"] = clockAnalogView;
+        doc["mascotScene"] = mascotSceneIndex;
 
         struct tm ti;
         if (getLocalTime(&ti)) {

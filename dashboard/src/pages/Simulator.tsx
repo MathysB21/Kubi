@@ -17,6 +17,16 @@ import {
   Sliders,
   Send,
   Compass,
+  Sun,
+  Cake,
+  Sparkles,
+  Flower2,
+  Music,
+  Coffee,
+  Moon,
+  Sunset,
+  Laptop,
+  Dumbbell,
 } from "lucide-react";
 import { playSimChime } from "../lib/audioChimes";
 import KubiDashboardApp from "../App";
@@ -33,9 +43,23 @@ interface SimState {
   lastChimeTime: number;
   isSleeping: boolean;
   mode: number;
+  mascotScene?: number;
   hour?: number;
   minute?: number;
 }
+
+const MASCOT_SCENES = [
+  { id: 0, title: "Beach Ice Cream", desc: "Eating ice cream by the beach", icon: Sun },
+  { id: 1, title: "Birthday Party", desc: "Celebrating birthday party", icon: Cake },
+  { id: 2, title: "Christmas Holiday", desc: "Cozy warm holiday cheer", icon: Sparkles },
+  { id: 3, title: "Flower Field", desc: "Laying in wildflower meadow", icon: Flower2 },
+  { id: 4, title: "Listening to Music", desc: "Grooving with headphones", icon: Music },
+  { id: 5, title: "Sitting by Cafe", desc: "Relaxing at an outdoor cafe", icon: Coffee },
+  { id: 6, title: "Sleeping in Bed", desc: "Deep peaceful night sleep", icon: Moon },
+  { id: 7, title: "Watching Sunset", desc: "Admiring golden hour sunset", icon: Sunset },
+  { id: 8, title: "Working from Home", desc: "Focused productivity at desk", icon: Laptop },
+  { id: 9, title: "Gym Workout", desc: "Active workout & fitness", icon: Dumbbell },
+];
 
 export default function Simulator() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -45,6 +69,7 @@ export default function Simulator() {
   const [lastHandledChimeTime, setLastHandledChimeTime] = useState(0);
   const [autoRotate, setAutoRotate] = useState(true);
   const [timeMode, setTimeMode] = useState<"real" | "manual">("real");
+  const [mascotScene, setMascotScene] = useState(0);
 
   const getRotationDeg = (rot: number) => {
     if (!autoRotate) return 0;
@@ -136,6 +161,10 @@ export default function Simulator() {
               setMinuteInput(data.minute);
             }
 
+            if (data.mascotScene !== undefined) {
+              setMascotScene(data.mascotScene);
+            }
+
             // Audio chime detection
             if (
               isAudioEnabled &&
@@ -194,6 +223,12 @@ export default function Simulator() {
     setActiveFace(faceIdx);
     setSimState((prev) => (prev ? { ...prev, rotation: faceIdx, mode: faceIdx } : null));
     inject({ face: faceIdx });
+  };
+
+  // Mascot idle scene change
+  const handleSelectMascotScene = (sceneIdx: number) => {
+    setMascotScene(sceneIdx);
+    inject({ mascotScene: sceneIdx });
   };
 
   // Gestures
@@ -289,8 +324,8 @@ export default function Simulator() {
       {/* MAIN CONTENT AREA */}
       <div className="flex-1 flex overflow-hidden">
         {/* LEFT COLUMN: THE PHYSICAL KUBI CUBE & IPS DISPLAY */}
-        <div className="w-full lg:w-[480px] border-r border-zinc-800/80 bg-zinc-950/80 p-8 flex flex-col items-center justify-center shrink-0">
-          <div className="text-center mb-5 flex items-center justify-between w-full max-w-[370px]">
+        <div className="w-full lg:w-[500px] border-r border-zinc-800/80 bg-zinc-950/80 p-8 flex flex-col items-center justify-center shrink-0">
+          <div className="text-center mb-5 flex items-center justify-between w-full max-w-[400px]">
             <div className="text-left">
               <span className="text-[11px] font-mono tracking-widest text-zinc-400 uppercase">
                 {autoRotate ? "Desk Companion View" : "Raw Panel View (240x320)"}
@@ -312,9 +347,9 @@ export default function Simulator() {
           </div>
 
           {/* WOODEN CUBE BEZEL (10cm x 10cm DESK COMPANION CHASSIS) */}
-          <div className="w-[370px] h-[370px] flex items-center justify-center relative select-none">
+          <div className="w-[410px] h-[410px] flex items-center justify-center relative select-none">
             <div
-              className="relative w-[360px] h-[360px] rounded-3xl shadow-2xl border-4 flex flex-col items-center justify-center"
+              className="relative w-[400px] h-[400px] rounded-3xl shadow-2xl border-4 flex items-center justify-center"
               style={{
                 background: "linear-gradient(145deg, #2a1f18 0%, #17110e 100%)",
                 borderColor: "#3d2e24",
@@ -324,15 +359,16 @@ export default function Simulator() {
               }}
             >
               {/* Brass Corner Machine Screws */}
-              <div className="absolute top-2.5 left-2.5 w-2.5 h-2.5 rounded-full bg-amber-700/60 border border-amber-600/80 shadow-inner" />
-              <div className="absolute top-2.5 right-2.5 w-2.5 h-2.5 rounded-full bg-amber-700/60 border border-amber-600/80 shadow-inner" />
-              <div className="absolute bottom-2.5 left-2.5 w-2.5 h-2.5 rounded-full bg-amber-700/60 border border-amber-600/80 shadow-inner" />
-              <div className="absolute bottom-2.5 right-2.5 w-2.5 h-2.5 rounded-full bg-amber-700/60 border border-amber-600/80 shadow-inner" />
+              <div className="absolute top-3 left-3 w-3 h-3 rounded-full bg-amber-700/60 border border-amber-600/80 shadow-inner" />
+              <div className="absolute top-3 right-3 w-3 h-3 rounded-full bg-amber-700/60 border border-amber-600/80 shadow-inner" />
+              <div className="absolute bottom-3 left-3 w-3 h-3 rounded-full bg-amber-700/60 border border-amber-600/80 shadow-inner" />
+              <div className="absolute bottom-3 right-3 w-3 h-3 rounded-full bg-amber-700/60 border border-amber-600/80 shadow-inner" />
 
-              {/* Inner Display Bezel */}
+              {/* Inner Display Screen Cutout (Sharp 90° Corners, Exact 240x320) */}
               <div
                 onClick={() => triggerGesture("tap")}
-                className="relative cursor-pointer group rounded-xl overflow-hidden p-1 bg-black border-2 border-zinc-800 shadow-inner transition-transform active:scale-[0.98]"
+                className="relative cursor-pointer group overflow-hidden border-2 border-zinc-800 shadow-2xl transition-transform active:scale-[0.98]"
+                style={{ width: 244, height: 324 }}
                 title="Click to trigger gentle tap!"
               >
                 {/* Glass Reflection Glare */}
@@ -343,25 +379,24 @@ export default function Simulator() {
                   ref={canvasRef}
                   width={240}
                   height={320}
-                  className="rounded-lg block transition-opacity duration-300"
+                  className="block transition-opacity duration-300"
                   style={{
                     imageRendering: "pixelated",
                     opacity: simState ? (simState.isSleeping ? 0.08 : simState.backlight / 255) : 1,
-                    boxShadow: "0 0 20px rgba(0,0,0,0.9)",
                   }}
                 />
 
                 {/* Tap feedback indicator */}
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
-                  <span className="bg-black/60 backdrop-blur text-amber-400 font-mono text-[10px] px-2 py-1 rounded-full border border-amber-500/30">
+                  <span className="bg-black/70 backdrop-blur text-amber-400 font-mono text-[10px] px-2 py-1 border border-amber-500/30">
                     Tap to Interact
                   </span>
                 </div>
               </div>
 
-              {/* Logo on lower chassis */}
-              <div className="text-center mt-1">
-                <span className="font-mono text-[9px] tracking-[0.3em] text-amber-600/50 uppercase font-bold">
+              {/* Logo on lower chassis - centered in bottom margin */}
+              <div className="absolute bottom-3 left-0 right-0 text-center pointer-events-none">
+                <span className="font-mono text-[9px] tracking-[0.35em] text-amber-600/50 uppercase font-bold">
                   K U B I
                 </span>
               </div>
@@ -457,6 +492,48 @@ export default function Simulator() {
                   })}
                 </div>
               </section>
+
+              {/* MASCOT IDLE SELECTION (Visible when Face 3 is active) */}
+              {activeFace === 2 && (
+                <section className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-semibold tracking-wide uppercase text-zinc-300 flex items-center gap-2">
+                      <Smile className="w-4 h-4 text-amber-500" />
+                      Mascot Idle Scene Selector
+                    </h3>
+                    <span className="text-xs text-zinc-400">
+                      10 Scenes from art/Scaled Down • Tap/Shake to cycle
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                    {MASCOT_SCENES.map((scene) => {
+                      const Icon = scene.icon;
+                      const isSelected = mascotScene === scene.id;
+                      return (
+                        <button
+                          key={scene.id}
+                          onClick={() => handleSelectMascotScene(scene.id)}
+                          className={`p-3.5 rounded-xl text-left border transition-all ${
+                            isSelected
+                              ? "bg-amber-500/10 border-amber-500 text-amber-400 shadow-lg shadow-amber-500/10"
+                              : "bg-zinc-900/60 border-zinc-800 text-zinc-300 hover:border-zinc-700"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <Icon className={`w-4 h-4 ${isSelected ? "text-amber-400" : "text-zinc-400"}`} />
+                            <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400">
+                              #{scene.id + 1}
+                            </span>
+                          </div>
+                          <div className="font-semibold text-xs text-zinc-100 line-clamp-1">{scene.title}</div>
+                          <div className="text-[10px] text-zinc-400 mt-0.5 line-clamp-1">{scene.desc}</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
 
               {/* 2. PHYSICAL GESTURES TRIGGER */}
               <section className="space-y-3">
