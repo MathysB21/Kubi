@@ -23,4 +23,5 @@
 | [`2026-09-06-schedule-pagination-and-gesture-navigation.md`](./2026-09-06-schedule-pagination-and-gesture-navigation.md) | 2026-09-06 | Strict 4-item screen pagination state machine, tap progression through sub-pages and days, and shake-to-today gesture interaction. |
 | [`2026-09-06-spritesheet-slicer-and-animation-pipeline.md`](./2026-09-06-spritesheet-slicer-and-animation-pipeline.md) | 2026-09-06 | Multi-row spritesheet slicing tool with variable columns, nearest-neighbor pixel art scaling, and automated PlatformIO pre-build pipeline integration. |
 | [`2026-09-06-diegetic-mascot-dioramas-and-temperature-anchors.md`](./2026-09-06-diegetic-mascot-dioramas-and-temperature-anchors.md) | 2026-09-06 | Diegetic UI design paradigm for full-screen (240×320) mascot living rooms, layered scene composition, and contextual temperature anchor coordinates. |
+| [`2026-09-07-mascot-scene-selector-and-chassis-screen-geometry.md`](./2026-09-07-mascot-scene-selector-and-chassis-screen-geometry.md) | 2026-09-07 | Mascot scene selector for simulator, clean Face 3 HUD removal, sharp screen cutout corners, and symmetrical 400×400px cube chassis geometry. |
 
