@@ -15,6 +15,7 @@ extern String secretIcalUrl;
 extern volatile bool isScreenOverrideActive;
 extern String screenOverrideText;
 extern bool clockAnalogView;
+extern int mascotSceneIndex;
 
 // Diagnostics
 extern volatile float diagAccelX;
@@ -39,6 +40,7 @@ void setupAPIRoutes(AsyncWebServer& server) {
         doc["hasIcs"] = schedule.hasIcs();
         doc["hasEvents"] = schedule.hasEvents();
         doc["scheduleDay"] = schedule.getCurrentDayTitle();
+        doc["mascotScene"] = mascotSceneIndex;
 
         // Detailed Pomodoro State
         JsonObject pomoObj = doc["pomodoro"].to<JsonObject>();
@@ -127,6 +129,11 @@ void setupAPIRoutes(AsyncWebServer& server) {
             prefs.begin("kubi_settings", false);
             prefs.putBool("clockAnalog", clockAnalogView);
             prefs.end();
+        }
+
+        if (jsonObj["mascotScene"].is<int>()) {
+            mascotSceneIndex = jsonObj["mascotScene"].as<int>() % 10;
+            if (mascotSceneIndex < 0) mascotSceneIndex += 10;
         }
 
         request->send(200, "application/json", "{\"status\":\"success\"}");

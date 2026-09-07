@@ -34,10 +34,11 @@ volatile float diagAccelX = 0.0f;
 volatile float diagAccelY = 0.0f;
 volatile float diagAccelZ = 1.0f;
 
-// --- CLOCK SETTINGS ---
+// --- CLOCK & SCENE SETTINGS ---
 static bool clockShowDetails = false;
 bool clockAnalogView = false;
 static uint32_t clockDetailsTimeout = 0;
+int mascotSceneIndex = 0; // Active placeholder scene on Mascot Face (0..9)
 
 // --- NETWORK & TIME CONFIG ---
 const char* ntpServer          = "pool.ntp.org";
@@ -315,6 +316,11 @@ void core1HardwareTask(void * parameter) {
             } else if (currentMode == MODE_SCHEDULE_AGENDA) {
               schedule.handleTap();
               audio.playChime(CHIME_TAP_FEEDBACK);
+            } else if (currentMode == MODE_MASCOT_ROUTINE) {
+              // Tap: Next scene
+              mascotSceneIndex = (mascotSceneIndex + 1) % 10;
+              audio.playChime(CHIME_TAP_FEEDBACK);
+              Serial.printf("[MASCOT] Tap -> Next scene: %d\n", mascotSceneIndex);
             }
             break;
 
@@ -333,6 +339,11 @@ void core1HardwareTask(void * parameter) {
               schedule.handleShake();
               audio.playChime(CHIME_TAP_FEEDBACK);
               Serial.println("[SCHEDULE] Shake detected -> Jumped to today");
+            } else if (currentMode == MODE_MASCOT_ROUTINE) {
+              // Shake: Previous scene
+              mascotSceneIndex = (mascotSceneIndex - 1 + 10) % 10;
+              audio.playChime(CHIME_TAP_FEEDBACK);
+              Serial.printf("[MASCOT] Shake -> Prev scene: %d\n", mascotSceneIndex);
             }
             break;
 
@@ -389,7 +400,7 @@ void core1HardwareTask(void * parameter) {
             break;
 
           case MODE_MASCOT_ROUTINE:
-            display.drawMascotFace(roomTemperature, currentHour);
+            display.drawMascotFace(roomTemperature, currentHour, mascotSceneIndex, true);
             break;
 
           case MODE_SCHEDULE_AGENDA:

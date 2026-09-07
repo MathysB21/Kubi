@@ -1,5 +1,6 @@
 #include "DisplayManager.h"
 #include "ScheduleManager.h"
+#include "KubiScenes.h"
 #include <cmath>
 
 #define BACKLIGHT_PIN 32
@@ -332,6 +333,74 @@ void DisplayManager::drawMascotFace(float temperature, int hourOfDay) {
 
     _tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
     _tft.drawString("Room Temperature", cx, h - 20, 2);
+}
+
+void DisplayManager::drawScene(int sceneIndex) {
+    if (ALL_KUBI_SCENE_COUNT == 0) return;
+    int idx = sceneIndex % (int)ALL_KUBI_SCENE_COUNT;
+    if (idx < 0) idx += (int)ALL_KUBI_SCENE_COUNT;
+
+    const KubiScene* sc = ALL_KUBI_SCENES[idx];
+    if (!sc || !sc->palette || !sc->rleData) return;
+
+    int w = _tft.width();
+    int h = _tft.height();
+    uint8_t scale = sc->scale > 0 ? sc->scale : 1;
+
+    int totalPixels = sc->width * sc->height;
+    int curPixel = 0;
+    uint32_t rleBytes = sc->rleLength;
+
+    for (uint32_t i = 0; i + 1 < rleBytes && curPixel < totalPixels; i += 2) {
+        uint8_t count = pgm_read_byte(&sc->rleData[i]);
+        uint8_t colorIdx = pgm_read_byte(&sc->rleData[i + 1]);
+        if (colorIdx >= sc->paletteSize) colorIdx = 0;
+        uint16_t color = pgm_read_word(&sc->palette[colorIdx]);
+
+        for (uint8_t c = 0; c < count && curPixel < totalPixels; c++) {
+            int px = curPixel % sc->width;
+            int py = curPixel / sc->width;
+            int screenX = px * scale;
+            int screenY = py * scale;
+
+            if (scale == 1) {
+                _tft.drawPixel(screenX, screenY, color);
+            } else if (scale == 2) {
+                // 2x2 integer block
+                _tft.drawPixel(screenX, screenY, color);
+                _tft.drawPixel(screenX + 1, screenY, color);
+                _tft.drawPixel(screenX, screenY + 1, color);
+                _tft.drawPixel(screenX + 1, screenY + 1, color);
+            } else {
+                _tft.fillRect(screenX, screenY, scale, scale, color);
+            }
+            curPixel++;
+        }
+    }
+}
+
+void DisplayManager::drawMascotFace(float temperature, int hourOfDay, int sceneIndex, bool showHud) {
+    int w = _tft.width();
+    int h = _tft.height();
+    int cx = w / 2;
+
+    if (ALL_KUBI_SCENE_COUNT > 0 && sceneIndex >= 0) {
+        // Draw the full-screen placeholder scene (240x320)
+        drawScene(sceneIndex);
+
+        if (showHud) {
+            // Bottom temperature badge pill
+            char tempBuf[16];
+            snprintf(tempBuf, sizeof(tempBuf), "%.1f °C", temperature);
+            _tft.fillRoundRect(cx - 50, h - 36, 100, 28, 8, 0x18C3);
+            _tft.drawRoundRect(cx - 50, h - 36, 100, 28, 8, TFT_GOLD);
+            _tft.setTextColor(TFT_GOLD, 0x18C3);
+            _tft.drawString(tempBuf, cx, h - 22, 2);
+        }
+    } else {
+        // Fallback to stylized vector mascot if no scenes loaded
+        drawMascotFace(temperature, hourOfDay);
+    }
 }
 
 void DisplayManager::drawScheduleFace(const String& dayTitle, const std::vector<ScheduleItem>& items, bool hasIcs, bool hasEvents) {

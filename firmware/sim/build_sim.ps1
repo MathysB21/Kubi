@@ -24,12 +24,26 @@ if (-not $clang) {
 
 Write-Host "Using compiler: $clang" -ForegroundColor Green
 
+# Find Python for pre-build asset conversion
+$python = "$env:USERPROFILE\.platformio\penv\Scripts\python.exe"
+if (-not (Test-Path $python)) {
+    $pyCmd = Get-Command "python.exe" -ErrorAction SilentlyContinue
+    if ($pyCmd) { $python = $pyCmd.Source }
+}
+
+if (Test-Path $python) {
+    Write-Host "Re-generating sprites & scenes from assets..." -ForegroundColor Yellow
+    & $python "$firmwareDir\tools\build_sprites.py"
+    & $python "$firmwareDir\tools\build_scenes.py"
+}
+
 $srcFiles = @(
     "$firmwareDir\src\PomodoroManager.cpp",
     "$firmwareDir\src\DisplayManager.cpp",
     "$firmwareDir\src\SensorManager.cpp",
     "$firmwareDir\src\AudioManager.cpp",
     "$firmwareDir\src\KubiSprites.cpp",
+    "$firmwareDir\src\KubiScenes.cpp",
     "$firmwareDir\src\ScheduleManager.cpp",
     "$scriptDir\src\TFT_eSPI_Mock.cpp",
     "$scriptDir\src\sim_main.cpp"
