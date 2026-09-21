@@ -15,6 +15,7 @@ import {
   RotateCcw,
   Sliders,
   Moon,
+  WifiOff,
   Palette,
   Upload,
   Trash2,
@@ -150,28 +151,35 @@ function KubiDashboard() {
   const qc = useQueryClient();
   const [icalInput, setIcalInput] = useState("");
 
-  // 1. Fetch system state
-  const { data = DEFAULT_STATE, isLoading } = useQuery<KubiState>({
+  // 1. Fetch system state. Failures throw so the UI can show that Kubi is
+  // unreachable instead of rendering plausible-looking defaults.
+  const {
+    data: liveData,
+    isLoading,
+    isError,
+    dataUpdatedAt,
+    refetch,
+  } = useQuery<KubiState>({
     queryKey: ["kubiState"],
     queryFn: async () => {
-      try {
-        const res = await fetch("/api/state");
-        if (!res.ok) return DEFAULT_STATE;
-        const json = await res.json();
-        return {
-          ...DEFAULT_STATE,
-          ...json,
-          pomodoro: {
-            ...DEFAULT_STATE.pomodoro,
-            ...(json.pomodoro || {}),
-          },
-        };
-      } catch {
-        return DEFAULT_STATE;
-      }
+      const res = await fetch("/api/state");
+      if (!res.ok) throw new Error(`Kubi responded ${res.status}`);
+      const json = await res.json();
+      return {
+        ...DEFAULT_STATE,
+        ...json,
+        pomodoro: {
+          ...DEFAULT_STATE.pomodoro,
+          ...(json.pomodoro || {}),
+        },
+      };
     },
+    retry: 1,
     refetchInterval: 1000, // 1Hz live polling for smooth timer sync
   });
+  // Only ever real data past the connection gate below
+  const data = liveData ?? DEFAULT_STATE;
+  const isStale = isError && liveData !== undefined;
 
   // 2. Settings mutation
   const mutation = useMutation({
@@ -531,9 +539,43 @@ function KubiDashboard() {
     );
   }
 
+  if (liveData === undefined) {
+    // Never reached the cube: show that plainly rather than fake values
+    return (
+      <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center p-6 font-montserrat">
+        <div className="max-w-sm text-center space-y-4">
+          <WifiOff size={32} className="mx-auto text-amber-500" />
+          <h1 className="text-lg font-medium">Can't reach Kubi</h1>
+          <p className="text-sm text-zinc-500 leading-relaxed">
+            Make sure Kubi is switched on and this device is on the same WiFi network, then open{" "}
+            <span className="font-mono text-zinc-300">http://kubi.local</span>.
+          </p>
+          <button
+            onClick={() => refetch()}
+            className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-amber-500 border border-amber-500/30 rounded-xl text-xs font-medium transition-colors cursor-pointer"
+          >
+            Try again
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 p-6 pb-24 font-montserrat">
-      <div className="max-w-md mx-auto space-y-6">
+      {isStale && (
+        <div className="sticky top-0 z-10 -mx-6 -mt-6 mb-6 px-6 py-3 bg-rose-500/10 border-b border-rose-500/30 text-rose-300 text-xs flex items-center justify-center gap-2">
+          <WifiOff size={14} />
+          Lost connection to Kubi. Showing the last state from{" "}
+          {new Date(dataUpdatedAt).toLocaleTimeString()}.
+        </div>
+      )}
+      <div
+        className={`max-w-md mx-auto space-y-6 transition-opacity ${
+          isStale ? "opacity-50 pointer-events-none select-none" : ""
+        }`}
+        aria-disabled={isStale}
+      >
         {/* 3D WIREFRAME SPINNING CUBE */}
         <SpinningCube />
 
