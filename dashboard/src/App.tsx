@@ -14,6 +14,7 @@ import {
   SkipForward,
   RotateCcw,
   Sliders,
+  Moon,
   Palette,
   Upload,
   Trash2,
@@ -69,6 +70,8 @@ interface KubiState {
   alarmMinute: number;
   cfgSundownHour: number;
   cfgSundownMinute: number;
+  sleepTimeoutMin?: number;
+  isSleeping?: boolean;
   pomodoro: PomodoroState;
   [key: string]: any;
 }
@@ -111,6 +114,17 @@ const FACE_MODES = [
   { id: 1, name: "Face 2: Pomodoro", desc: "Auto focus timer with 8-bit chimes", icon: Timer },
   { id: 2, name: "Face 3: Mascot & Temp", desc: "Kubi routine & room telemetry", icon: Smile },
   { id: 3, name: "Face 4: Schedule", desc: "3-day Google Calendar agenda", icon: Calendar },
+];
+
+// Minutes of inactivity before the Mascot face turns its screen off (0 = never)
+const SLEEP_OPTIONS = [
+  { min: 0, label: "Never" },
+  { min: 1, label: "1 min" },
+  { min: 2, label: "2 min" },
+  { min: 5, label: "5 min" },
+  { min: 10, label: "10 min" },
+  { min: 15, label: "15 min" },
+  { min: 30, label: "30 min" },
 ];
 
 const PRESET_COLORS = [
@@ -419,6 +433,43 @@ function KubiDashboard() {
               </div>
             </div>
           </div>
+        </div>
+      ),
+    },
+    // SCREEN SLEEP ITEM
+    {
+      headerContent: (
+        <div className="flex items-center gap-3 font-medium text-zinc-100">
+          <Moon size={18} className="text-amber-500" /> Screen Sleep
+        </div>
+      ),
+      bodyContent: (
+        <div className="space-y-4 text-sm">
+          <p className="text-xs text-zinc-500 leading-relaxed">
+            The Mascot face turns its screen off after this much stillness. Tap or move Kubi to wake it.
+            The Clock and Pomodoro faces stay on.
+          </p>
+          <div className="grid grid-cols-4 gap-2">
+            {SLEEP_OPTIONS.map((opt) => {
+              const isActive = (data.sleepTimeoutMin ?? 5) === opt.min;
+              return (
+                <button
+                  key={opt.min}
+                  onClick={() => mutation.mutate({ sleepTimeoutMin: opt.min })}
+                  className={`py-2 rounded-xl text-xs font-medium border transition-colors cursor-pointer ${
+                    isActive
+                      ? "bg-amber-500/10 border-amber-500/50 text-amber-500"
+                      : "bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+          {data.isSleeping && (
+            <p className="text-xs text-zinc-500">Kubi's screen is asleep right now.</p>
+          )}
         </div>
       ),
     },

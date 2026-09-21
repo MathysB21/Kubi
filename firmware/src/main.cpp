@@ -257,6 +257,7 @@ void core0NetworkTask(void * parameter) {
 void core1HardwareTask(void * parameter) {
   uint32_t lastRenderTime = 0;
   uint32_t lastPomoTick   = 0;
+  uint32_t lastMotionSeen = 0;
   int previousFace = -1;
 
   for (;;) {
@@ -292,15 +293,15 @@ void core1HardwareTask(void * parameter) {
 
         clockShowDetails = false;
         sensors.getRecentGesture(); // Flush any transient gesture during orientation transition
+        display.noteActivity();
       }
     }
 
     // 5. Gesture Handling (Streamlined: Tap = Dismiss/Pause/Play, Shake = Skip)
     KubiGesture gesture = sensors.getRecentGesture();
     if (gesture != GESTURE_NONE) {
-      if (display.isSleeping()) {
-        display.wakeScreen();
-        audio.playChime(CHIME_WAKE_PING);
+      if (display.noteActivity()) {
+        // Gesture only woke the screen: swallow it, silently (it may be night)
       } else {
         switch (gesture) {
           case GESTURE_TAP:
@@ -346,6 +347,14 @@ void core1HardwareTask(void * parameter) {
         }
       }
     }
+
+    // 5b. Inactivity sleep: any movement wakes silently; only some faces sleep
+    uint32_t motionTime = sensors.getLastMotionTime();
+    if (motionTime != lastMotionSeen) {
+      lastMotionSeen = motionTime;
+      display.noteActivity();
+    }
+    display.setSleepAllowed(modeMaySleep(currentMode) && !isScreenOverrideActive);
 
     // Auto collapse clock details
     if (clockShowDetails && now > clockDetailsTimeout) {
@@ -474,6 +483,7 @@ void setup() {
   secretIcalUrl   = preferences.getString("icalUrl", "");
   tzOffset        = preferences.getInt("tzOffset", 2);
   clockAnalogView = preferences.getBool("clockAnalog", false);
+  display.setSleepTimeoutMinutes(preferences.getInt("sleepMin", 5));
   preferences.end();
 
   // 8. Sync Clock via NTP

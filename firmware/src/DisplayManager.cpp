@@ -14,7 +14,10 @@ DisplayManager::DisplayManager()
       _currentBacklight(255),
       _targetBacklight(255),
       _sleeping(false),
-      _wakeExpiryTime(0),
+      _wakeRequested(false),
+      _sleepAllowed(false),
+      _sleepTimeoutMin(5),
+      _lastActivityTime(0),
       _currentRotation(0) {}
 
 void DisplayManager::init() {
@@ -35,25 +38,66 @@ void DisplayManager::setBacklight(uint8_t brightness) {
     ledcWrite(PWM_CHANNEL, brightness);
 }
 
+// Backlight steps per loop() call while fading out (~10 ms per call -> ~0.35 s fade)
+#define SLEEP_FADE_STEP 8
+
 void DisplayManager::setSleep(bool sleep) {
     _sleeping = sleep;
-    if (sleep) {
-        setBacklight(0);
-    } else {
-        setBacklight(255);
+    _targetBacklight = sleep ? 0 : 255;
+    if (!sleep) {
+        setBacklight(255); // Wake is instant; only the fade-out is gradual
     }
 }
 
-void DisplayManager::wakeScreen(uint32_t durationMs) {
-    _sleeping = false;
-    setBacklight(255);
-    _wakeExpiryTime = millis() + durationMs;
+bool DisplayManager::noteActivity() {
+    _lastActivityTime = millis();
+    if (_sleeping) {
+        setSleep(false);
+        Serial.println("[DISPLAY] Woke from inactivity sleep");
+        return true;
+    }
+    return false;
+}
+
+void DisplayManager::requestWake() {
+    _wakeRequested = true;
+}
+
+void DisplayManager::setSleepAllowed(bool allowed) {
+    if (allowed == _sleepAllowed) return;
+    _sleepAllowed = allowed;
+    _lastActivityTime = millis(); // Timer starts fresh when entering a sleeping face
+    if (!allowed && _sleeping) {
+        setSleep(false);
+    }
+}
+
+void DisplayManager::setSleepTimeoutMinutes(int minutes) {
+    if (minutes < 0) minutes = 0;
+    if (minutes > 120) minutes = 120;
+    _sleepTimeoutMin = minutes;
+    _lastActivityTime = millis();
+    if (minutes == 0 && _sleeping) {
+        setSleep(false);
+    }
 }
 
 void DisplayManager::loop() {
-    if (_wakeExpiryTime > 0 && millis() > _wakeExpiryTime) {
-        _wakeExpiryTime = 0;
+    if (_wakeRequested) {
+        _wakeRequested = false;
+        noteActivity();
+    }
+
+    if (!_sleeping && _sleepAllowed && _sleepTimeoutMin > 0 &&
+        millis() - _lastActivityTime > (uint32_t)_sleepTimeoutMin * 60000UL) {
+        Serial.println("[DISPLAY] Inactivity timeout -> sleeping");
         setSleep(true);
+    }
+
+    // Gentle fade-out to the target backlight level
+    if (_currentBacklight > _targetBacklight) {
+        int next = (int)_currentBacklight - SLEEP_FADE_STEP;
+        setBacklight(next < (int)_targetBacklight ? _targetBacklight : (uint8_t)next);
     }
 }
 

@@ -14,8 +14,16 @@ public:
     void setBacklight(uint8_t brightness);
     void setSleep(bool sleep);
     bool isSleeping() const { return _sleeping; }
-    void wakeScreen(uint32_t durationMs = 30000);
-    void loop(); // Handles sleep timeout
+    void loop(); // Inactivity timer + backlight fade. Call from the hardware loop.
+
+    // --- Inactivity sleep ---
+    // The orchestration loop reports activity (gesture, motion, face change)
+    // and says whether the current face may sleep at all.
+    bool noteActivity();              // Hardware loop only. Returns true if it woke the screen.
+    void requestWake();               // Any task (e.g. API handlers): woken on next loop().
+    void setSleepAllowed(bool allowed);
+    void setSleepTimeoutMinutes(int minutes); // 0 = never sleep
+    int  getSleepTimeoutMinutes() const { return _sleepTimeoutMin; }
 
     void drawBootScreen(const String& status);
     void drawClockFace(int hour, int minute, int wday, int mday, int month, bool showDetails, bool isAnalog = false, const String& nextEvent = "", const String& ticker = "");
@@ -39,8 +47,11 @@ private:
     TFT_eSPI _tft;
     uint8_t _currentBacklight;
     uint8_t _targetBacklight;
-    bool _sleeping;
-    uint32_t _wakeExpiryTime;
+    volatile bool _sleeping;
+    volatile bool _wakeRequested;
+    bool _sleepAllowed;
+    int _sleepTimeoutMin;
+    uint32_t _lastActivityTime;
     uint8_t _currentRotation;
 
     void drawMascot(int centerX, int centerY, int state);

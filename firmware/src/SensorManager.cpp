@@ -4,6 +4,10 @@
 #define I2C_SDA_PIN 21
 #define I2C_SCL_PIN 22
 
+// m/s^2 change between samples that counts as "someone moved the cube".
+// Tap is 7.0. Tune on hardware: ADXL345 at 16 g is ~0.3 m/s^2 per LSB.
+#define MOTION_WAKE_DELTA 1.5f
+
 SensorManager sensors;
 
 SensorManager::SensorManager()
@@ -21,7 +25,8 @@ SensorManager::SensorManager()
       _shakeCount(0),
       _lastSignX(0),
       _shakeWindowStart(0),
-      _lastTapTime(0) {}
+      _lastTapTime(0),
+      _lastMotionTime(0) {}
 
 bool SensorManager::init() {
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
@@ -102,6 +107,12 @@ void SensorManager::processMotion(float x, float y, float z) {
     float dz = z - _prevZ;
     float deltaMag = sqrt(dx * dx + dy * dy + dz * dz);
     float totalMag = sqrt(x * x + y * y + z * z);
+
+    // 0. Wake-on-motion: anything well above ADXL345 noise but far below a tap.
+    // deltaMag spans two samples (see the ordering quirk in loop()).
+    if (deltaMag > MOTION_WAKE_DELTA) {
+        _lastMotionTime = now;
+    }
 
     // 1. Desk Slam Detection: Violent impulse (>3.5G total magnitude)
     if (totalMag > 35.0f && (now - _lastTapTime > 600)) {

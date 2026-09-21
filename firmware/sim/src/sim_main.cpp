@@ -78,6 +78,7 @@ void hardwareSimulationThread() {
     std::cout << "[SIM] Core 1 Hardware Loop Started." << std::endl;
     uint32_t lastRenderTime = 0;
     uint32_t lastPomoTick = 0;
+    uint32_t lastMotionSeen = 0;
     int previousFace = -1;
 
     while (sim_running) {
@@ -128,6 +129,7 @@ void hardwareSimulationThread() {
                 clockShowDetails = false;
                 sim_injected_gesture = GESTURE_NONE;
                 sensors.getRecentGesture();
+                display.noteActivity();
             }
         }
 
@@ -138,11 +140,8 @@ void hardwareSimulationThread() {
             gesture = injected;
         }
         if (gesture != GESTURE_NONE) {
-            if (display.isSleeping()) {
-                display.wakeScreen();
-                audio.playChime(CHIME_WAKE_PING);
-                sim_last_chime_name = "CHIME_WAKE_PING";
-                sim_last_chime_time = now;
+            if (display.noteActivity()) {
+                std::cout << "[SIM GESTURE] Gesture woke the screen (swallowed)." << std::endl;
             } else {
                 switch (gesture) {
                     case GESTURE_TAP:
@@ -203,6 +202,14 @@ void hardwareSimulationThread() {
                 }
             }
         }
+
+        // 5b. Inactivity sleep (mirrors main.cpp)
+        uint32_t motionTime = sensors.getLastMotionTime();
+        if (motionTime != lastMotionSeen) {
+            lastMotionSeen = motionTime;
+            display.noteActivity();
+        }
+        display.setSleepAllowed(modeMaySleep(currentMode) && !isScreenOverrideActive);
 
         if (clockShowDetails && now > clockDetailsTimeout) {
             clockShowDetails = false;
@@ -288,6 +295,7 @@ int main() {
     Preferences prefs;
     prefs.begin("kubi_settings", false);
     clockAnalogView = prefs.getBool("clockAnalog", false);
+    display.setSleepTimeoutMinutes(prefs.getInt("sleepMin", 5));
     prefs.end();
 
     display.init();
@@ -344,6 +352,8 @@ int main() {
         doc["pomodoroFocus"] = pomodoro.getFocusMinutes();
         doc["pomodoroBreak"] = pomodoro.getShortBreakMinutes();
         doc["clockAnalog"] = clockAnalogView;
+        doc["sleepTimeoutMin"] = display.getSleepTimeoutMinutes();
+        doc["isSleeping"] = display.isSleeping();
 
         std::string jsonStr;
         serializeJson(doc, jsonStr);
@@ -368,6 +378,7 @@ int main() {
         if (jsonObj["mode"].is<int>()) {
             currentMode = (KubiMode)jsonObj["mode"].as<int>();
             display.setRotationForFace((int)currentMode);
+            display.requestWake();
         }
 
         if (jsonObj["icalUrl"].is<const char*>()) {
@@ -410,6 +421,14 @@ int main() {
             Preferences prefs;
             prefs.begin("kubi_settings", false);
             prefs.putBool("clockAnalog", clockAnalogView);
+            prefs.end();
+        }
+
+        if (jsonObj["sleepTimeoutMin"].is<int>()) {
+            display.setSleepTimeoutMinutes(jsonObj["sleepTimeoutMin"].as<int>());
+            Preferences prefs;
+            prefs.begin("kubi_settings", false);
+            prefs.putInt("sleepMin", display.getSleepTimeoutMinutes());
             prefs.end();
         }
 
@@ -457,6 +476,7 @@ int main() {
         if (jsonObj["message"].is<const char*>()) {
             screenOverrideText = jsonObj["message"].as<const char*>();
             isScreenOverrideActive = true;
+            display.requestWake();
             std::cout << "[OVERRIDE] Alert received: " << screenOverrideText.c_str() << std::endl;
             res.set_content("{\"status\":\"alert_displayed\"}", "application/json");
         } else {

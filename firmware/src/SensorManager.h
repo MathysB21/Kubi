@@ -22,6 +22,8 @@ public:
     int getActiveFace() const { return _activeFace; }
     KubiGesture getRecentGesture(); // Returns and clears last gesture
     float getTemperature() const { return _temperature; }
+    // millis() of the last movement above the wake threshold (0 = none yet)
+    uint32_t getLastMotionTime() const { return _lastMotionTime; }
 
     void getAcceleration(float &x, float &y, float &z) const {
         x = _lastX;
@@ -51,6 +53,9 @@ private:
 
     // Tap debouncing
     uint32_t _lastTapTime;
+
+    // Screen-wake motion tracking
+    uint32_t _lastMotionTime;
 
     void processMotion(float x, float y, float z);
     void updateFace(float x, float y, float z);

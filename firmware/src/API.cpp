@@ -6,6 +6,7 @@
 #include <WiFi.h>
 #include "PomodoroManager.h"
 #include "ScheduleManager.h"
+#include "DisplayManager.h"
 
 // --- SHARED GLOBALS (Defined in main.cpp) ---
 extern volatile KubiMode currentMode;
@@ -62,6 +63,8 @@ void setupAPIRoutes(AsyncWebServer& server) {
         doc["pomodoroFocus"] = pomodoro.getFocusMinutes();
         doc["pomodoroBreak"] = pomodoro.getShortBreakMinutes();
         doc["clockAnalog"] = clockAnalogView;
+        doc["sleepTimeoutMin"] = display.getSleepTimeoutMinutes();
+        doc["isSleeping"] = display.isSleeping();
 
         serializeJson(doc, *response);
         request->send(response);
@@ -77,6 +80,7 @@ void setupAPIRoutes(AsyncWebServer& server) {
         // 1. Mode Change
         if (jsonObj["mode"].is<int>()) {
             currentMode = (KubiMode)jsonObj["mode"].as<int>();
+            display.requestWake();
         }
 
         // 2. Calendar Sync URL
@@ -129,6 +133,15 @@ void setupAPIRoutes(AsyncWebServer& server) {
             prefs.end();
         }
 
+        // 5. Screen sleep timeout (minutes, 0 = never)
+        if (jsonObj["sleepTimeoutMin"].is<int>()) {
+            display.setSleepTimeoutMinutes(jsonObj["sleepTimeoutMin"].as<int>());
+            Preferences prefs;
+            prefs.begin("kubi_settings", false);
+            prefs.putInt("sleepMin", display.getSleepTimeoutMinutes());
+            prefs.end();
+        }
+
         request->send(200, "application/json", "{\"status\":\"success\"}");
     });
     server.addHandler(settingsHandler);
@@ -169,6 +182,7 @@ void setupAPIRoutes(AsyncWebServer& server) {
         if (jsonObj["message"].is<const char*>()) {
             screenOverrideText = jsonObj["message"].as<String>();
             isScreenOverrideActive = true;
+            display.requestWake();
             Serial.printf("[OVERRIDE] Custom alert received: %s\n", screenOverrideText.c_str());
             request->send(200, "application/json", "{\"status\":\"alert_displayed\"}");
         } else {
