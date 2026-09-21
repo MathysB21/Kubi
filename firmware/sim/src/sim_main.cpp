@@ -5,6 +5,8 @@
 #include <vector>
 #include <string>
 #include <sstream>
+#include <mutex>
+#include <cstring>
 
 #include "httplib.h"
 #include "Arduino.h"
@@ -44,7 +46,26 @@ volatile float    roomTemperature        = 22.0f;
 volatile int      batteryPercentage      = 100;
 String            secretIcalUrl          = "";
 volatile bool     isScreenOverrideActive = false;
-String            screenOverrideText     = "";
+
+// Mirrors main.cpp setOverrideText()/getOverrideText() (portMUX there)
+static char       overrideTextBuf[OVERRIDE_TEXT_MAX] = "";
+static std::mutex overrideTextMutex;
+
+void setOverrideText(const char* text) {
+    size_t len = strnlen(text, OVERRIDE_TEXT_MAX - 1);
+    std::lock_guard<std::mutex> lock(overrideTextMutex);
+    memcpy(overrideTextBuf, text, len);
+    overrideTextBuf[len] = '\0';
+}
+
+String getOverrideText() {
+    char local[OVERRIDE_TEXT_MAX];
+    {
+        std::lock_guard<std::mutex> lock(overrideTextMutex);
+        memcpy(local, overrideTextBuf, OVERRIDE_TEXT_MAX);
+    }
+    return String(local);
+}
 
 volatile float diagAccelX = 0.0f;
 volatile float diagAccelY = 0.0f;
@@ -220,7 +241,7 @@ void hardwareSimulationThread() {
             lastRenderTime = now;
 
             if (isScreenOverrideActive) {
-                display.drawOverrideAlert(screenOverrideText);
+                display.drawOverrideAlert(getOverrideText());
             } else {
                 struct tm timeinfo;
                 int currentHour = 12, currentMin = 0;
@@ -474,10 +495,10 @@ int main() {
         JsonObject jsonObj = json.as<JsonObject>();
 
         if (jsonObj["message"].is<const char*>()) {
-            screenOverrideText = jsonObj["message"].as<const char*>();
+            setOverrideText(jsonObj["message"].as<const char*>());
             isScreenOverrideActive = true;
             display.requestWake();
-            std::cout << "[OVERRIDE] Alert received: " << screenOverrideText.c_str() << std::endl;
+            std::cout << "[OVERRIDE] Alert received: " << getOverrideText().c_str() << std::endl;
             res.set_content("{\"status\":\"alert_displayed\"}", "application/json");
         } else {
             res.status = 400;

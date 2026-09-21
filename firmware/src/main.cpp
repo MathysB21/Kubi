@@ -27,7 +27,27 @@ volatile float    roomTemperature        = 21.5f;           // BMP280 temperatur
 volatile int      batteryPercentage      = 100;             // Battery telemetry
 String            secretIcalUrl          = "";              // Google Calendar iCal link
 volatile bool     isScreenOverrideActive = false;           // Brother's secret text alert flag
-String            screenOverrideText     = "";              // Custom alert banner text
+
+// Custom alert banner text: see setOverrideText()/getOverrideText()
+static char        overrideTextBuf[OVERRIDE_TEXT_MAX] = "";
+static portMUX_TYPE overrideTextMux = portMUX_INITIALIZER_UNLOCKED;
+
+void setOverrideText(const char* text) {
+  // Bounded memcpy only: no heap allocation while interrupts are masked
+  size_t len = strnlen(text, OVERRIDE_TEXT_MAX - 1);
+  portENTER_CRITICAL(&overrideTextMux);
+  memcpy(overrideTextBuf, text, len);
+  overrideTextBuf[len] = '\0';
+  portEXIT_CRITICAL(&overrideTextMux);
+}
+
+String getOverrideText() {
+  char local[OVERRIDE_TEXT_MAX];
+  portENTER_CRITICAL(&overrideTextMux);
+  memcpy(local, overrideTextBuf, OVERRIDE_TEXT_MAX);
+  portEXIT_CRITICAL(&overrideTextMux);
+  return String(local);
+}
 
 // Telemetry Diagnostics
 volatile float diagAccelX = 0.0f;
@@ -366,7 +386,7 @@ void core1HardwareTask(void * parameter) {
       lastRenderTime = now;
 
       if (isScreenOverrideActive) {
-        display.drawOverrideAlert(screenOverrideText);
+        display.drawOverrideAlert(getOverrideText());
       } else {
         struct tm timeinfo;
         int currentHour = 12, currentMin = 0;

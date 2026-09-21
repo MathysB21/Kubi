@@ -14,7 +14,6 @@ extern volatile float roomTemperature;
 extern volatile int batteryPercentage;
 extern String secretIcalUrl;
 extern volatile bool isScreenOverrideActive;
-extern String screenOverrideText;
 extern bool clockAnalogView;
 
 // Diagnostics
@@ -180,10 +179,10 @@ void setupAPIRoutes(AsyncWebServer& server) {
         JsonObject jsonObj = json.as<JsonObject>();
 
         if (jsonObj["message"].is<const char*>()) {
-            screenOverrideText = jsonObj["message"].as<String>();
-            isScreenOverrideActive = true;
+            setOverrideText(jsonObj["message"].as<const char*>());
+            isScreenOverrideActive = true; // Set after the text so the reader never sees a stale banner
             display.requestWake();
-            Serial.printf("[OVERRIDE] Custom alert received: %s\n", screenOverrideText.c_str());
+            Serial.printf("[OVERRIDE] Custom alert received: %s\n", getOverrideText().c_str());
             request->send(200, "application/json", "{\"status\":\"alert_displayed\"}");
         } else {
             request->send(400, "application/json", "{\"error\":\"missing message field\"}");

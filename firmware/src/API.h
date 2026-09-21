@@ -15,5 +15,12 @@ inline bool modeMaySleep(KubiMode mode) {
   return mode == MODE_MASCOT_ROUTINE;
 }
 
+// Override banner text is written by the web server task and drawn by the
+// hardware loop on the other core. Never share a String across tasks: always
+// go through these, which copy a bounded char buffer under a lock.
+#define OVERRIDE_TEXT_MAX 128
+void setOverrideText(const char* text);
+String getOverrideText();
+
 // Declare the function that will attach all our routes
 void setupAPIRoutes(AsyncWebServer& server);
