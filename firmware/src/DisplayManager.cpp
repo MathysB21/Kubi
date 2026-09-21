@@ -1,5 +1,6 @@
 #include "DisplayManager.h"
 #include "AmbientFace.h"
+#include "FaceMap.h"
 #include <cmath>
 
 #define BACKLIGHT_PIN 32
@@ -130,14 +131,9 @@ void DisplayManager::setRotation(uint8_t rotation) {
 }
 
 void DisplayManager::setRotationForFace(int face) {
-    // Physical Cube Orientation Mapping:
-    // Face 1 Up: Standard Portrait (0)
-    // Face 2 Up: Turned 90 deg sideways -> Landscape (1)
-    // Face 3 Up: Inverted Portrait (2)
-    // Face 4 Up: Turned 270 deg sideways -> Inverted Landscape (3)
-    static const uint8_t faceToRotation[4] = { 0, 1, 2, 3 };
-    if (face >= 0 && face < 4) {
-        setRotation(faceToRotation[face]);
+    // Rotation per face comes from the shared table in FaceMap.h
+    if (face >= 0 && face < FACE_COUNT) {
+        setRotation(FACE_POSES[face].rotation);
     }
 }
 

@@ -18,6 +18,7 @@
 #include "AudioManager.h"
 #include "PomodoroManager.h"
 #include "AmbientFace.h"
+#include "FaceMap.h"
 #include "API.h"
 #include "ArduinoJson.h"
 
@@ -617,11 +618,9 @@ int main() {
         // Quick Face Orientation Selection
         if (obj["face"].is<int>()) {
             int face = obj["face"].as<int>();
-            if (face >= 0 && face <= 3) {
-                if (face == 0) { sim_accel_x = 0.0f; sim_accel_y = 0.0f; sim_accel_z = 9.8f; }
-                else if (face == 1) { sim_accel_x = 9.8f; sim_accel_y = 0.0f; sim_accel_z = 0.0f; }
-                else if (face == 2) { sim_accel_x = 0.0f; sim_accel_y = 9.8f; sim_accel_z = 0.0f; }
-                else if (face == 3) { sim_accel_x = -9.8f; sim_accel_y = 0.0f; sim_accel_z = 0.0f; }
+            if (face >= 0 && face < FACE_COUNT) {
+                // Same table the firmware classifies with (FaceMap.h)
+                gravityForFace(face, sim_accel_x, sim_accel_y, sim_accel_z);
 
                 currentMode = (KubiMode)face; // rotation applied by the hardware thread
                 clockShowDetails = false;

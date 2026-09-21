@@ -57,6 +57,10 @@ private:
     // Screen-wake motion tracking
     uint32_t _lastMotionTime;
 
+    // Orientation debounce (pose ids from FaceMap.h)
+    int _candidatePose;
+    uint32_t _candidateSince;
+
     void processMotion(float x, float y, float z);
     void updateFace(float x, float y, float z);
 };

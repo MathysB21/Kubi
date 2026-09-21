@@ -1,4 +1,5 @@
 #include "SensorManager.h"
+#include "FaceMap.h"
 #include <math.h>
 
 #define I2C_SDA_PIN 21
@@ -26,7 +27,9 @@ SensorManager::SensorManager()
       _lastSignX(0),
       _shakeWindowStart(0),
       _lastTapTime(0),
-      _lastMotionTime(0) {}
+      _lastMotionTime(0),
+      _candidatePose(AXIS_Z * 2), // +Z, as before
+      _candidateSince(0) {}
 
 bool SensorManager::init() {
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
@@ -150,32 +153,19 @@ void SensorManager::processMotion(float x, float y, float z) {
 }
 
 void SensorManager::updateFace(float x, float y, float z) {
-    static int candidateFace = 0;
-    static uint32_t faceCandidateStartTime = 0;
-
-    int detected = 0;
-    float absX = fabs(x);
-    float absY = fabs(y);
-    float absZ = fabs(z);
-
-    // Determine dominant axis
-    if (absZ >= absX && absZ >= absY) {
-        detected = (z > 0) ? 0 : 4; // Face 1 (Clock) or Inverted
-    } else if (absX >= absY && absX >= absZ) {
-        detected = (x > 0) ? 1 : 3; // Face 2 (Pomodoro) or Face 4 (Ambient)
-    } else {
-        detected = (y > 0) ? 2 : 5; // Face 3 (Mascot) or Bottom
-    }
+    // Which resting position is this? The pose -> face mapping lives in FaceMap.h.
+    int pose = classifyPose(x, y, z);
 
     // Debounce orientation: Must remain stable for 400ms before switching face
-    if (detected != candidateFace) {
-        candidateFace = detected;
-        faceCandidateStartTime = millis();
+    if (pose != _candidatePose) {
+        _candidatePose = pose;
+        _candidateSince = millis();
         _lastTapTime = millis(); // Suppress false tap detection during orientation flips
         _recentGesture = GESTURE_NONE;
-    } else if (millis() - faceCandidateStartTime > 400) {
-        if (_activeFace != candidateFace && candidateFace <= 3) {
-            _activeFace = candidateFace;
+    } else if (millis() - _candidateSince > 400) {
+        int face = faceForPose(_candidatePose);
+        if (face >= 0 && _activeFace != face) {
+            _activeFace = face;
             _lastTapTime = millis(); // Suppress tap when face settles
             _recentGesture = GESTURE_NONE;
             Serial.printf("[ORIENTATION] Cube resting on Face %d UP\n", _activeFace + 1);
