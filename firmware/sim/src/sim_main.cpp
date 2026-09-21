@@ -113,6 +113,7 @@ void hardwareSimulationThread() {
     uint32_t lastMotionSeen = 0;
     int previousFace = -1;
     bool mazeWasActive = false;
+    bool mazeWasLocked = false;
 
     while (sim_running) {
         uint32_t now = millis();
@@ -176,6 +177,13 @@ void hardwareSimulationThread() {
         bool mazeActive = mazeFaceActive(currentMode);
         if (mazeActive && !mazeWasActive) maze.begin();
         mazeWasActive = mazeActive;
+        // Face lock while playing (mirrors main.cpp)
+        bool mazeLocked = mazeActive && maze.isPlaying(now);
+        sensors.setFaceSettleTime(mazeLocked ? FACE_SETTLE_LOCKED : FACE_SETTLE_MS);
+        if (mazeLocked != mazeWasLocked) {
+            std::cout << "[MAZE] Face lock " << (mazeLocked ? "on" : "off") << std::endl;
+            mazeWasLocked = mazeLocked;
+        }
         if (mazeActive) {
             float ax, ay, az;
             sensors.getAcceleration(ax, ay, az);
@@ -213,7 +221,7 @@ void hardwareSimulationThread() {
                             audio.playChime(CHIME_TAP_FEEDBACK);
                             sim_last_chime_name = "CHIME_TAP_FEEDBACK";
                             sim_last_chime_time = now;
-                        } else if (currentMode == MODE_AMBIENT) {
+                        } else if (currentMode == MODE_AMBIENT && !face4Maze) {
                             ambient.nextColour(); // silent, mirrors main.cpp
                         }
                         break;

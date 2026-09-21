@@ -6,6 +6,11 @@
 // Face 4 (optional, replaces Ambient when face4Maze is set): tilt-maze game.
 // Positions are in cell units (1.0 = one board cell), so the physics does not
 // care how big the screen or the cells are.
+// While the maze is being played the face is locked (see FACE_SETTLE_LOCKED).
+// Without clear tilt input for this long the lock lets go, so a cube left on
+// the maze face can never be stuck there.
+#define MAZE_IDLE_UNLOCK_MS 45000
+
 class MazeGame {
 public:
     MazeGame();
@@ -22,6 +27,11 @@ public:
     // full = the screen was just cleared. Otherwise only the ball (and HUD
     // text that changed) is repainted.
     void draw(TFT_eSPI& tft, bool full, uint32_t nowMs);
+
+    // True while someone is actively playing: clear tilt within MAZE_IDLE_UNLOCK_MS.
+    bool isPlaying(uint32_t nowMs) const {
+        return _lastInputMs != 0 && nowMs - _lastInputMs < MAZE_IDLE_UNLOCK_MS;
+    }
 
     void placeBall(float x, float y) { _bx = x; _by = y; }
     int  boardIndex() const { return _board; }
@@ -45,6 +55,7 @@ private:
     int   _calN;
     uint32_t _lastUpdateMs;
     float _stepAccum;
+    uint32_t _lastInputMs;         // 0 = no input since the board started
 
     void startCalibration(uint32_t nowMs);
     void step(float dt, float tiltX, float tiltY);

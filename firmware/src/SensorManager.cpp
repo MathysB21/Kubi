@@ -29,7 +29,8 @@ SensorManager::SensorManager()
       _lastTapTime(0),
       _lastMotionTime(0),
       _candidatePose(AXIS_Z * 2), // +Z, as before
-      _candidateSince(0) {}
+      _candidateSince(0),
+      _faceSettleMs(FACE_SETTLE_MS) {}
 
 bool SensorManager::init() {
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
@@ -156,13 +157,13 @@ void SensorManager::updateFace(float x, float y, float z) {
     // Which resting position is this? The pose -> face mapping lives in FaceMap.h.
     int pose = classifyPose(x, y, z);
 
-    // Debounce orientation: Must remain stable for 400ms before switching face
+    // Debounce orientation: must remain stable for _faceSettleMs before switching face
     if (pose != _candidatePose) {
         _candidatePose = pose;
         _candidateSince = millis();
         _lastTapTime = millis(); // Suppress false tap detection during orientation flips
         _recentGesture = GESTURE_NONE;
-    } else if (millis() - _candidateSince > 400) {
+    } else if (millis() - _candidateSince > _faceSettleMs) {
         int face = faceForPose(_candidatePose);
         if (face >= 0 && _activeFace != face) {
             _activeFace = face;

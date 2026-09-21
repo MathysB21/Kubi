@@ -37,7 +37,7 @@ MazeGame::MazeGame()
     : _board(0), _startX(1.5f), _startY(1.5f), _bx(1.5f), _by(1.5f),
       _vx(0), _vy(0), _fx(0), _fy(0), _fz(0), _restX(0), _restY(0), _restZ(0),
       _haveFilter(false), _calibrating(true), _calStart(0),
-      _calSumX(0), _calSumY(0), _calSumZ(0), _calN(0), _lastUpdateMs(0), _stepAccum(0),
+      _calSumX(0), _calSumY(0), _calSumZ(0), _calN(0), _lastUpdateMs(0), _stepAccum(0), _lastInputMs(0),
       _cell(16), _ox(0), _oy(HUD_H), _drawnBallX(-1), _drawnBallY(-1) {
     memset(_cells, '#', sizeof(_cells));
 }
@@ -71,6 +71,7 @@ void MazeGame::loadBoard(int index) {
     _drawnBallX = _drawnBallY = -1;
     _calibrating = true;   // re-zero on the next update()
     _calStart = 0;
+    _lastInputMs = 0;
 }
 
 void MazeGame::startCalibration(uint32_t nowMs) {
@@ -119,6 +120,7 @@ void MazeGame::update(float ax, float ay, float az, uint32_t nowMs) {
         float k = (mag - DEADZONE) / mag;  // continuous past the deadzone
         tiltX *= k;
         tiltY *= k;
+        if (mag > DEADZONE * 1.5f) _lastInputMs = nowMs ? nowMs : 1; // deliberate tilt: playing
     }
 
     float dt = (nowMs - _lastUpdateMs) / 1000.0f;

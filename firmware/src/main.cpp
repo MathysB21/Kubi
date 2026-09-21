@@ -340,6 +340,7 @@ void core1HardwareTask(void * parameter) {
   uint32_t lastMotionSeen = 0;
   int previousFace = -1;
   bool mazeWasActive = false;
+  bool mazeWasLocked = false;
 
   for (;;) {
     uint32_t now = millis();
@@ -389,6 +390,14 @@ void core1HardwareTask(void * parameter) {
     bool mazeActive = mazeFaceActive(currentMode);
     if (mazeActive && !mazeWasActive) maze.begin();
     mazeWasActive = mazeActive;
+    // Face lock while playing: leaving needs a 2 s hold on another face, and
+    // the maze lets go by itself after MAZE_IDLE_UNLOCK_MS without input.
+    bool mazeLocked = mazeActive && maze.isPlaying(now);
+    sensors.setFaceSettleTime(mazeLocked ? FACE_SETTLE_LOCKED : FACE_SETTLE_MS);
+    if (mazeLocked != mazeWasLocked) {
+      Serial.printf("[MAZE] Face lock %s\n", mazeLocked ? "on" : "off");
+      mazeWasLocked = mazeLocked;
+    }
     if (mazeActive) {
       float ax, ay, az;
       sensors.getAcceleration(ax, ay, az);
@@ -414,7 +423,7 @@ void core1HardwareTask(void * parameter) {
               pomodoro.handleTap();
             } else if (currentMode == MODE_CLOCK_IDLE) {
               audio.playChime(CHIME_TAP_FEEDBACK);
-            } else if (currentMode == MODE_AMBIENT) {
+            } else if (currentMode == MODE_AMBIENT && !face4Maze) {
               ambient.nextColour(); // silent: this face is for dark rooms
             }
             break;

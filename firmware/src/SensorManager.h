@@ -5,6 +5,10 @@
 #include <Adafruit_ADXL345_U.h>
 #include <Adafruit_BMP280.h>
 
+// How long a new resting position must hold before the face switches.
+#define FACE_SETTLE_MS     400
+#define FACE_SETTLE_LOCKED 2000  // while a game holds the face: "roll over and hold" to leave
+
 enum KubiGesture {
     GESTURE_NONE = 0,
     GESTURE_TAP,
@@ -20,6 +24,8 @@ public:
     void loop(); // Call frequently from Core 1 (~50-100Hz)
 
     int getActiveFace() const { return _activeFace; }
+    // FACE_SETTLE_MS normally; FACE_SETTLE_LOCKED while the maze is being played
+    void setFaceSettleTime(uint32_t ms) { _faceSettleMs = ms; }
     KubiGesture getRecentGesture(); // Returns and clears last gesture
     float getTemperature() const { return _temperature; }
     // millis() of the last movement above the wake threshold (0 = none yet)
@@ -60,6 +66,7 @@ private:
     // Orientation debounce (pose ids from FaceMap.h)
     int _candidatePose;
     uint32_t _candidateSince;
+    uint32_t _faceSettleMs;
 
     void processMotion(float x, float y, float z);
     void updateFace(float x, float y, float z);
