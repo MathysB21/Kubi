@@ -18,6 +18,7 @@
 #include "AudioManager.h"
 #include "PomodoroManager.h"
 #include "ScheduleManager.h"
+#include "AmbientFace.h"
 #include "API.h"
 #include "ArduinoJson.h"
 
@@ -183,11 +184,8 @@ void hardwareSimulationThread() {
                             audio.playChime(CHIME_TAP_FEEDBACK);
                             sim_last_chime_name = "CHIME_TAP_FEEDBACK";
                             sim_last_chime_time = now;
-                        } else if (currentMode == MODE_SCHEDULE_AGENDA) {
-                            schedule.handleTap();
-                            audio.playChime(CHIME_TAP_FEEDBACK);
-                            sim_last_chime_name = "CHIME_TAP_FEEDBACK";
-                            sim_last_chime_time = now;
+                        } else if (currentMode == MODE_AMBIENT) {
+                            ambient.nextColour(); // silent, mirrors main.cpp
                         }
                         break;
 
@@ -205,12 +203,6 @@ void hardwareSimulationThread() {
                             sim_last_chime_name = "CHIME_TAP_FEEDBACK";
                             sim_last_chime_time = now;
                             std::cout << "[SIM CLOCK] Shake toggled view -> " << (clockAnalogView ? "analog" : "digital") << " (saved to Preferences)" << std::endl;
-                        } else if (currentMode == MODE_SCHEDULE_AGENDA) {
-                            schedule.handleShake();
-                            audio.playChime(CHIME_TAP_FEEDBACK);
-                            sim_last_chime_name = "CHIME_TAP_FEEDBACK";
-                            sim_last_chime_time = now;
-                            std::cout << "[SIM SCHEDULE] Shake jumped to today" << std::endl;
                         }
                         break;
 
@@ -234,6 +226,7 @@ void hardwareSimulationThread() {
             display.noteActivity();
         }
         display.setSleepAllowed(modeMaySleep(currentMode) && !isScreenOverrideActive);
+        display.setAwakeBrightness(currentMode == MODE_AMBIENT && !isScreenOverrideActive ? AmbientFace::BACKLIGHT : 255);
 
         if (clockShowDetails && now > clockDetailsTimeout) {
             clockShowDetails = false;
@@ -280,8 +273,8 @@ void hardwareSimulationThread() {
                         display.drawMascotFace(roomTemperature, currentHour);
                         break;
 
-                    case MODE_SCHEDULE_AGENDA:
-                        display.drawScheduleFace(schedule.getCurrentDayTitle(), schedule.getCurrentPageItems(), schedule.hasIcs(), schedule.hasEvents());
+                    case MODE_AMBIENT:
+                        display.drawAmbientFace();
                         break;
 
                     default:
@@ -402,7 +395,7 @@ int main() {
         // Mirrors API.cpp: the hardware thread applies the rotation
         if (jsonObj["mode"].is<int>()) {
             int mode = jsonObj["mode"].as<int>();
-            if (mode >= MODE_CLOCK_IDLE && mode <= MODE_SCHEDULE_AGENDA) {
+            if (mode >= MODE_CLOCK_IDLE && mode <= MODE_AMBIENT) {
                 currentMode = (KubiMode)mode;
                 display.requestWake();
             }

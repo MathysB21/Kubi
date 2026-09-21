@@ -1,5 +1,6 @@
 #include "DisplayManager.h"
 #include "ScheduleManager.h"
+#include "AmbientFace.h"
 #include <cmath>
 
 #define BACKLIGHT_PIN 32
@@ -13,6 +14,7 @@ DisplayManager::DisplayManager()
     : _tft(),
       _currentBacklight(255),
       _targetBacklight(255),
+      _awakeBacklight(255),
       _sleeping(false),
       _wakeRequested(false),
       _sleepAllowed(false),
@@ -47,15 +49,21 @@ void DisplayManager::setBacklight(uint8_t brightness) {
     ledcWrite(PWM_CHANNEL, brightness);
 }
 
-// Backlight steps per loop() call while fading out (~10 ms per call -> ~0.35 s fade)
-#define SLEEP_FADE_STEP 8
+// Backlight steps per loop() call while fading (~10 ms per call -> ~0.35 s full range)
+#define BACKLIGHT_FADE_STEP 8
 
 void DisplayManager::setSleep(bool sleep) {
     _sleeping = sleep;
-    _targetBacklight = sleep ? 0 : 255;
+    _targetBacklight = sleep ? 0 : _awakeBacklight;
     if (!sleep) {
-        setBacklight(255); // Wake is instant; only the fade-out is gradual
+        setBacklight(_awakeBacklight); // Wake is instant; only the fade-out is gradual
     }
+}
+
+void DisplayManager::setAwakeBrightness(uint8_t level) {
+    if (level == _awakeBacklight) return;
+    _awakeBacklight = level;
+    if (!_sleeping) _targetBacklight = level; // loop() fades towards it
 }
 
 bool DisplayManager::noteActivity() {
@@ -103,10 +111,13 @@ void DisplayManager::loop() {
         setSleep(true);
     }
 
-    // Gentle fade-out to the target backlight level
+    // Gentle fade towards the target backlight level, either direction
     if (_currentBacklight > _targetBacklight) {
-        int next = (int)_currentBacklight - SLEEP_FADE_STEP;
+        int next = (int)_currentBacklight - BACKLIGHT_FADE_STEP;
         setBacklight(next < (int)_targetBacklight ? _targetBacklight : (uint8_t)next);
+    } else if (_currentBacklight < _targetBacklight) {
+        int next = (int)_currentBacklight + BACKLIGHT_FADE_STEP;
+        setBacklight(next > (int)_targetBacklight ? _targetBacklight : (uint8_t)next);
     }
 }
 
@@ -607,6 +618,11 @@ void DisplayManager::drawScheduleFace(const std::vector<String>& events, int pag
         items.push_back(item);
     }
     drawScheduleFace("Schedule (today)", items, true, !items.empty());
+}
+
+void DisplayManager::drawAmbientFace() {
+    bool full = beginScene(SCENE_AMBIENT);
+    ambient.draw(_tft, full, millis());
 }
 
 void DisplayManager::drawOverrideAlert(const String& message) {

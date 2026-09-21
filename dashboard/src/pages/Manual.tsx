@@ -43,7 +43,7 @@ function Manual() {
               <li><strong>Face 1 Up (Focus Clock):</strong> Clean time and date display. Shake to toggle between digital and analog clock view.</li>
               <li><strong>Face 2 Up (Pomodoro Timer):</strong> Rotates display upright and starts your configured focus/break timer with 8-bit chimes.</li>
               <li><strong>Face 3 Up (Mascot &amp; Environment):</strong> Room temperature from the internal sensor and animated Kubi daily routines.</li>
-              <li><strong>Face 4 Up (Schedule &amp; Agenda):</strong> Upcoming 3-day schedule summary synced from Google Calendar.</li>
+              <li><strong>Face 4 Up (Ambient Glow):</strong> A dim, slowly breathing pixel glow that drifts through night colours, made for a dark room. Tap to move on to the next colour. This face never sleeps.</li>
             </ul>
           </div>
         </section>

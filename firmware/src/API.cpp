@@ -81,7 +81,7 @@ void setupAPIRoutes(AsyncWebServer& server) {
         // TFT from this (AsyncTCP) task.
         if (jsonObj["mode"].is<int>()) {
             int mode = jsonObj["mode"].as<int>();
-            if (mode >= MODE_CLOCK_IDLE && mode <= MODE_SCHEDULE_AGENDA) {
+            if (mode >= MODE_CLOCK_IDLE && mode <= MODE_AMBIENT) {
                 currentMode = (KubiMode)mode;
                 display.requestWake();
             }

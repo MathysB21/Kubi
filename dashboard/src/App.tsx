@@ -3,6 +3,7 @@ import {
   Timer,
   Smile,
   Calendar,
+  Sparkles,
   Activity,
   RefreshCw,
   Wifi,
@@ -114,7 +115,7 @@ const FACE_MODES = [
   { id: 0, name: "Face 1: Focus Clock", desc: "Minimal digital & analog clock with date", icon: Clock },
   { id: 1, name: "Face 2: Pomodoro", desc: "Auto focus timer with 8-bit chimes", icon: Timer },
   { id: 2, name: "Face 3: Mascot & Temp", desc: "Kubi routine & room telemetry", icon: Smile },
-  { id: 3, name: "Face 4: Schedule", desc: "3-day Google Calendar agenda", icon: Calendar },
+  { id: 3, name: "Face 4: Ambient", desc: "Slow colour glow for a dark room", icon: Sparkles },
 ];
 
 // Minutes of inactivity before the Mascot face turns its screen off (0 = never)

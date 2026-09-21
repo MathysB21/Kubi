@@ -48,7 +48,7 @@ When the user shares a screenshot containing:
    - **Auto-Orient Mode**: When Face 2 (Pomodoro Timer) or Face 4 is selected, the cube chassis physically and smoothly rolls $-90^\circ$ onto its side into widescreen landscape ($320\times 240$) right-side up.
    - Clicking the screen triggers a simulated gentle tap.
 2. **Right-Hand Panel**:
-   - **Hardware Rig Tab**: Orientation buttons (Face 1: Clock, Face 2: Pomodoro, Face 3: Mascot, Face 4: Schedule), Gesture triggers (Gentle Tap, Shake to skip, Desk Slam ouch!), sliders for Temperature, Time Machine, Battery, and 3-axis Accelerometer.
+   - **Hardware Rig Tab**: Orientation buttons (Face 1: Clock, Face 2: Pomodoro, Face 3: Mascot, Face 4: Ambient), Gesture triggers (Gentle Tap, Shake to skip, Desk Slam ouch!), sliders for Temperature, Time Machine, Battery, and 3-axis Accelerometer.
    - **Side-by-Side Dashboard Tab**: Embeds the full live companion dashboard.
 3. **8-Bit Web Audio**:
    - Real-time synthesizer plays retro square-wave chimes whenever firmware triggers `audio.playChime(...)`.
@@ -113,8 +113,10 @@ Kubi uses **Software-in-the-Loop** simulation:
     - `CHIME_POMODORO_LONG_BREAK`: Unique extended 7-note triumphant fanfare (C5 -> E5 -> G5 -> C6 -> D6 -> E6 -> G6) played when all cycles finish and transitioning into the Long Break.
 * **Face 3: Mascot & Room Temp**:
   - Animated bouncing Kubi jelly character and live room temperature readings from BMP280.
-* **Face 4: Schedule Agenda**:
-  - Google Calendar 3-day agenda fetched via iCal URL. Gentle tap pages through agenda items.
+* **Face 4: Ambient Glow** (`AmbientFace.cpp`, ships by default; the tilt maze may replace it):
+  - Dithered pixel-art orb (8 px cells, 4x4 Bayer fringe) that breathes (9 s) and eases through a night palette (40 s per colour).
+  - Backlight fades down to `AmbientFace::BACKLIGHT` on this face. Exempt from screen sleep. Tap moves on to the next colour, silently.
+  - Redraws at 10 Hz and pushes only cells whose colour changed (~8k px/s).
 
 ---
 

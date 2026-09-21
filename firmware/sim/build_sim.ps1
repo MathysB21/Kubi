@@ -31,6 +31,7 @@ $srcFiles = @(
     "$firmwareDir\src\AudioManager.cpp",
     "$firmwareDir\src\KubiSprites.cpp",
     "$firmwareDir\src\ScheduleManager.cpp",
+    "$firmwareDir\src\AmbientFace.cpp",
     "$scriptDir\src\TFT_eSPI_Mock.cpp",
     "$scriptDir\src\sim_main.cpp"
 )

@@ -4,7 +4,7 @@ import {
   Clock,
   Timer,
   Smile,
-  Calendar,
+  Sparkles,
   Volume2,
   VolumeX,
   RotateCw,
@@ -427,9 +427,9 @@ export default function Simulator() {
                     {
                       id: 3,
                       title: "Face 4 UP",
-                      mode: "3-Day Schedule",
-                      desc: "Google Calendar agenda",
-                      icon: Calendar,
+                      mode: "Ambient Glow",
+                      desc: "Slow colour glow for a dark room",
+                      icon: Sparkles,
                     },
                   ].map((face) => {
                     const Icon = face.icon;

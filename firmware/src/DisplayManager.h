@@ -23,6 +23,8 @@ public:
     void requestWake();               // Any task (e.g. API handlers): woken on next loop().
     void setSleepAllowed(bool allowed);
     void setSleepTimeoutMinutes(int minutes); // 0 = never sleep
+    // Backlight level while awake (faces like Ambient run dimmer). Fades.
+    void setAwakeBrightness(uint8_t level);
     int  getSleepTimeoutMinutes() const { return _sleepTimeoutMin; }
 
     void drawBootScreen(const String& status);
@@ -39,6 +41,7 @@ public:
     void drawScheduleFace(const String& dayTitle, const std::vector<ScheduleItem>& items, bool hasIcs, bool hasEvents);
     void drawScheduleFace(const std::vector<String>& events, int page = 0);
     void drawOverrideAlert(const String& message);
+    void drawAmbientFace();
 
     void setRotation(uint8_t rotation);
     void setRotationForFace(int face);
@@ -50,6 +53,7 @@ private:
     TFT_eSPI _tft;
     uint8_t _currentBacklight;
     uint8_t _targetBacklight;
+    uint8_t _awakeBacklight;
     volatile bool _sleeping;
     volatile bool _wakeRequested;
     bool _sleepAllowed;
@@ -71,7 +75,8 @@ private:
         SCENE_POMODORO,
         SCENE_MASCOT,
         SCENE_SCHEDULE,
-        SCENE_OVERRIDE
+        SCENE_OVERRIDE,
+        SCENE_AMBIENT
     };
     Scene _scene;
     bool _fullRedraw;

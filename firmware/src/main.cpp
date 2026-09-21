@@ -15,6 +15,7 @@
 #include "AudioManager.h"
 #include "PomodoroManager.h"
 #include "ScheduleManager.h"
+#include "AmbientFace.h"
 #include <vector>
 
 // =============================================================================
@@ -308,7 +309,7 @@ void core1HardwareTask(void * parameter) {
           activeFace + 1,
           activeFace == 0 ? "Face 1 (Clock Idle)" :
           activeFace == 1 ? "Face 2 (Pomodoro Timer)" :
-          activeFace == 2 ? "Face 3 (Mascot & Temp)" : "Face 4 (Schedule Agenda)"
+          activeFace == 2 ? "Face 3 (Mascot & Temp)" : "Face 4 (Ambient)"
         );
 
         clockShowDetails = false;
@@ -337,9 +338,8 @@ void core1HardwareTask(void * parameter) {
               pomodoro.handleTap();
             } else if (currentMode == MODE_CLOCK_IDLE) {
               audio.playChime(CHIME_TAP_FEEDBACK);
-            } else if (currentMode == MODE_SCHEDULE_AGENDA) {
-              schedule.handleTap();
-              audio.playChime(CHIME_TAP_FEEDBACK);
+            } else if (currentMode == MODE_AMBIENT) {
+              ambient.nextColour(); // silent: this face is for dark rooms
             }
             break;
 
@@ -354,10 +354,6 @@ void core1HardwareTask(void * parameter) {
               preferences.end();
               audio.playChime(CHIME_TAP_FEEDBACK);
               Serial.printf("[CLOCK] Shake detected -> Switched to %s clock view (saved to NVS)\n", clockAnalogView ? "analog" : "digital");
-            } else if (currentMode == MODE_SCHEDULE_AGENDA) {
-              schedule.handleShake();
-              audio.playChime(CHIME_TAP_FEEDBACK);
-              Serial.println("[SCHEDULE] Shake detected -> Jumped to today");
             }
             break;
 
@@ -379,6 +375,7 @@ void core1HardwareTask(void * parameter) {
       display.noteActivity();
     }
     display.setSleepAllowed(modeMaySleep(currentMode) && !isScreenOverrideActive);
+    display.setAwakeBrightness(currentMode == MODE_AMBIENT && !isScreenOverrideActive ? AmbientFace::BACKLIGHT : 255);
 
     // Auto collapse clock details
     if (clockShowDetails && now > clockDetailsTimeout) {
@@ -425,8 +422,8 @@ void core1HardwareTask(void * parameter) {
             display.drawMascotFace(roomTemperature, currentHour);
             break;
 
-          case MODE_SCHEDULE_AGENDA:
-            display.drawScheduleFace(schedule.getCurrentDayTitle(), schedule.getCurrentPageItems(), schedule.hasIcs(), schedule.hasEvents());
+          case MODE_AMBIENT:
+            display.drawAmbientFace();
             break;
 
           default:
