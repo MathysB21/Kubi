@@ -83,9 +83,8 @@ void hardwareSimulationThread() {
     while (sim_running) {
         uint32_t now = millis();
 
-        // 1. Poll Sensors & Audio Engine
+        // 1. Poll Sensors & Display (audio runs in its own thread, like main.cpp audioTask)
         sensors.loop();
-        audio.loop();
         display.loop();
 
         // Synchronize active firmware chime to simulator telemetry
@@ -264,6 +263,15 @@ void hardwareSimulationThread() {
     }
 }
 
+// Mirrors main.cpp audioTask: paced by the mock I2S queue draining at the sample rate
+void audioThreadMain() {
+    while (sim_running) {
+        if (!audio.pump()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
+}
+
 // Add CORS headers helper
 void addCors(httplib::Response& res) {
     res.set_header("Access-Control-Allow-Origin", "*");
@@ -288,7 +296,8 @@ int main() {
     pomodoro.init();
     schedule.init();
 
-    // 2. Start hardware simulation loop
+    // 2. Start hardware simulation loop and audio pump
+    std::thread audioThread(audioThreadMain);
     std::thread hwThread(hardwareSimulationThread);
 
     // 3. Setup HTTP server
@@ -593,6 +602,11 @@ int main() {
         doc["isSleeping"] = display.isSleeping();
         doc["mode"] = (int)currentMode;
         doc["isAnalog"] = clockAnalogView;
+        doc["audioReady"] = audio.isReady();
+        if (const AudioOutputI2S* out = audio.getOutput()) {
+            doc["audioSamples"] = out->getSamplesWritten();
+            doc["audioUnderruns"] = out->getUnderruns();
+        }
 
         struct tm ti;
         if (getLocalTime(&ti)) {
@@ -610,5 +624,6 @@ int main() {
 
     sim_running = false;
     if (hwThread.joinable()) hwThread.join();
+    if (audioThread.joinable()) audioThread.join();
     return 0;
 }

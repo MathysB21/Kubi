@@ -50,6 +50,7 @@ AsyncWebServer server(80);
 // --- FREERTOS TASK HANDLES ---
 TaskHandle_t TaskCore0Network;
 TaskHandle_t TaskCore1Hardware;
+TaskHandle_t TaskAudio;
 
 // --- WIFI MANAGER TCP FIX & CALLBACKS ---
 bool justSavedConfig = false;
@@ -261,9 +262,8 @@ void core1HardwareTask(void * parameter) {
   for (;;) {
     uint32_t now = millis();
 
-    // 1. Poll Sensors & Audio Engine
+    // 1. Poll Sensors & Display (audio runs in its own task)
     sensors.loop();
-    audio.loop();
     display.loop();
 
     // 2. Second-by-second Pomodoro Countdown Tick
@@ -407,6 +407,20 @@ void core1HardwareTask(void * parameter) {
 }
 
 // =============================================================================
+// AUDIO TASK
+// Feeds the I2S DMA queue. pump() blocks (1 ms yields) while the queue is
+// full, so this task is paced by the 22,050 Hz sample clock rather than by the
+// 10 ms hardware loop, which could only supply ~29% of the samples needed.
+// =============================================================================
+void audioTask(void * parameter) {
+  for (;;) {
+    if (!audio.pump()) {
+      vTaskDelay(5 / portTICK_PERIOD_MS); // idle: poll for the next chime request
+    }
+  }
+}
+
+// =============================================================================
 // ARDUINO SETUP
 // =============================================================================
 void setup() {
@@ -422,6 +436,9 @@ void setup() {
 
   sensors.init();
   audio.init();
+  // Start audio immediately so the boot chime plays during WiFi connect.
+  // Priority 2 on core 1: above the hardware loop, it sleeps in the DMA wait.
+  xTaskCreatePinnedToCore(audioTask, "Audio", 3072, NULL, 2, &TaskAudio, 1);
   pomodoro.init();
 
   // Play power-up chime
