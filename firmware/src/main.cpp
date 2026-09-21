@@ -120,14 +120,56 @@ void saveNetworkToMemory(String ssid, String pass) {
   Serial.printf("[WIFI] Saved network to memory: %s\n", ssid.c_str());
 }
 
+// Stored password for a known SSID, looked up on the device (never sent to
+// the portal page). Checks wifi_memory, then the ESP32's own saved network.
+static String nativeSsid, nativePass;
+
+String lookupSavedPassword(const String& ssid) {
+  Preferences wifiPrefs;
+  wifiPrefs.begin("wifi_memory", true);
+  int count = wifiPrefs.getInt("count", 0);
+  for (int i = 0; i < count; i++) {
+    if (wifiPrefs.getString(("ssid_" + String(i)).c_str(), "") == ssid) {
+      String p = wifiPrefs.getString(("pass_" + String(i)).c_str(), "");
+      wifiPrefs.end();
+      return p;
+    }
+  }
+  wifiPrefs.end();
+  return (ssid == nativeSsid) ? nativePass : String("");
+}
+
+// Appends s as a double-quoted JS string literal. Escapes quotes and
+// backslashes, and emits < > & and control characters as \u00XX so an SSID
+// can never close the surrounding <script> or inject markup.
+static void appendJsString(String& out, const String& s) {
+  out += '"';
+  for (size_t i = 0; i < s.length(); i++) {
+    char c = s[i];
+    if (c == '"' || c == '\\') {
+      out += '\\';
+      out += c;
+    } else if ((uint8_t)c < 0x20 || c == '<' || c == '>' || c == '&') {
+      char esc[8];
+      snprintf(esc, sizeof(esc), "\\u%04x", (uint8_t)c);
+      out += esc;
+    } else {
+      out += c;
+    }
+  }
+  out += '"';
+}
+
 void connectToWiFi() {
   Serial.println("\n[WIFI] Checking for Known Networks...");
 
   WiFiMulti wifiMulti;
 
   // 1. Add native ESP32 NVS network
-  if (WiFi.SSID().length() > 0) {
-    wifiMulti.addAP(WiFi.SSID().c_str(), WiFi.psk().c_str());
+  nativeSsid = WiFi.SSID();
+  nativePass = WiFi.psk();
+  if (nativeSsid.length() > 0) {
+    wifiMulti.addAP(nativeSsid.c_str(), nativePass.c_str());
   }
 
   // 2. Load custom multi-network credentials from Preferences
@@ -172,22 +214,31 @@ void connectToWiFi() {
   display.drawBootScreen("Hotspot: Kubi-Setup");
   WiFiManager wifiManager;
 
-  // Pre-load known SSIDs into portal script
-  String jsNetworks = "<script>var savedNetworks = {";
-  wifiPrefs.begin("wifi_memory", false);
+  // Tell the portal which SSIDs Kubi already knows: names only. The hotspot is
+  // open, so passwords must never reach the page; a blank password for a known
+  // SSID is filled in on the device by lookupSavedPassword().
+  String jsNetworks = "<script>var knownNetworks=[";
+  bool first = true;
+  auto addKnown = [&](const String& s) {
+    if (s.length() == 0) return;
+    if (!first) jsNetworks += ",";
+    appendJsString(jsNetworks, s);
+    first = false;
+  };
+  wifiPrefs.begin("wifi_memory", true);
   count = wifiPrefs.getInt("count", 0);
+  bool nativeListed = false;
   for (int i = 0; i < count; i++) {
     String s = wifiPrefs.getString(("ssid_" + String(i)).c_str(), "");
-    String p = wifiPrefs.getString(("pass_" + String(i)).c_str(), "");
-    if (s.length() > 0) {
-      if (i > 0) jsNetworks += ",";
-      jsNetworks += "\"" + s + "\":\"" + p + "\"";
-    }
+    if (s == nativeSsid) nativeListed = true;
+    addKnown(s);
   }
-  jsNetworks += "};</script>";
   wifiPrefs.end();
+  if (!nativeListed) addKnown(nativeSsid);
+  jsNetworks += "];</script>";
 
   wifiManager.setCustomHeadElement(jsNetworks.c_str());
+  wifiManager.setSavedPasswordResolver(lookupSavedPassword);
   wifiManager.setSaveConfigCallback(saveConfigCallback);
   wifiManager.setConfigPortalTimeout(180); // 3 minutes timeout
 
