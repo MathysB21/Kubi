@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Link } from "react-router";
+import { TiltPad } from "../components/TiltPad";
 import {
   Clock,
   Timer,
@@ -515,6 +516,22 @@ export default function Simulator() {
                       </div>
                     </div>
                   </button>
+                </div>
+              </section>
+
+              {/* 2b. CONTINUOUS TILT (MAZE) */}
+              <section className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold tracking-wide uppercase text-zinc-300 flex items-center gap-2">
+                    <RotateCw className="w-4 h-4 text-amber-500" />
+                    Continuous Tilt
+                  </h3>
+                  <span className="text-xs text-zinc-400">
+                    Relative to the current face resting flat
+                  </span>
+                </div>
+                <div className="p-4 rounded-xl bg-zinc-900/60 border border-zinc-800">
+                  <TiltPad send={(t) => inject({ tiltRoll: t.roll, tiltPitch: t.pitch })} />
                 </div>
               </section>
 

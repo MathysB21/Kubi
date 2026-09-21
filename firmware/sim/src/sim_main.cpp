@@ -27,6 +27,8 @@ float sim_accel_x = 0.0f;
 float sim_accel_y = 0.0f;
 float sim_accel_z = 9.8f;
 float sim_temperature = 22.0f;
+float sim_tilt_roll = 0.0f;   // degrees, + = right side down (see FaceMap.h tiltedGravity)
+float sim_tilt_pitch = 0.0f;  // degrees, + = top edge away
 int sim_hour_override = -1;
 int sim_minute_override = -1;
 uint8_t sim_backlight_value = 255;
@@ -613,11 +615,30 @@ int main() {
             if (face >= 0 && face < FACE_COUNT) {
                 // Same table the firmware classifies with (FaceMap.h)
                 gravityForFace(face, sim_accel_x, sim_accel_y, sim_accel_z);
+                sim_tilt_roll = 0.0f;
+                sim_tilt_pitch = 0.0f;
 
                 currentMode = (KubiMode)face; // rotation applied by the hardware thread
                 sim_injected_gesture = GESTURE_NONE;
                 sensors.getRecentGesture();
             }
+        }
+
+        // Continuous tilt (workbench tilt pad / arrow keys): degrees relative to
+        // the current face resting flat. The frame comes from FaceMap.h, the
+        // same one the maze steers with. Clamped well short of 45 degrees so
+        // tilting never reads as a different face.
+        if (obj["tiltRoll"].is<float>() || obj["tiltPitch"].is<float>()) {
+            if (obj["tiltRoll"].is<float>())  sim_tilt_roll  = obj["tiltRoll"].as<float>();
+            if (obj["tiltPitch"].is<float>()) sim_tilt_pitch = obj["tiltPitch"].as<float>();
+            if (sim_tilt_roll > 35.0f) sim_tilt_roll = 35.0f;
+            if (sim_tilt_roll < -35.0f) sim_tilt_roll = -35.0f;
+            if (sim_tilt_pitch > 35.0f) sim_tilt_pitch = 35.0f;
+            if (sim_tilt_pitch < -35.0f) sim_tilt_pitch = -35.0f;
+            KVec3 g = tiltedGravity((int)currentMode, sim_tilt_roll, sim_tilt_pitch);
+            sim_accel_x = g.x;
+            sim_accel_y = g.y;
+            sim_accel_z = g.z;
         }
 
         // Preview the first-connect address screen without a reset
@@ -658,6 +679,8 @@ int main() {
         doc["accelX"] = sim_accel_x;
         doc["accelY"] = sim_accel_y;
         doc["accelZ"] = sim_accel_z;
+        doc["tiltRoll"] = sim_tilt_roll;
+        doc["tiltPitch"] = sim_tilt_pitch;
         doc["temp"] = sim_temperature;
         doc["battery"] = batteryPercentage;
         doc["rotation"] = sim_screen_rotation;
