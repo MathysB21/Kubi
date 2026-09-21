@@ -1,5 +1,7 @@
 #include "PomodoroManager.h"
 #include "AudioManager.h"
+#include <ctype.h>
+#include <string.h>
 #include <Preferences.h>
 
 PomodoroManager pomodoro;
@@ -18,7 +20,10 @@ PomodoroManager::PomodoroManager()
       _cycleTarget(4),
       _colorWork(0xFCE0),       // Default Amber (#F59E0B)
       _colorShortBreak(0x15D0),  // Default Emerald (#10B981)
-      _colorLongBreak(0x0D39)   // Default Sky (#0EA5E9)
+      _colorLongBreak(0x0D39),  // Default Sky (#0EA5E9)
+      _hexWork("#F59E0B"),
+      _hexShortBreak("#10B981"),
+      _hexLongBreak("#0EA5E9")
 {}
 
 void PomodoroManager::init() {
@@ -197,29 +202,46 @@ void PomodoroManager::setDurations(int focus, int shortBreak, int longBreak, int
     prefs.end();
 }
 
+// "#rrggbb" -> "#RRGGBB"; anything malformed becomes "#FFFFFF", matching the
+// white that hexToRGB565() falls back to.
+void PomodoroManager::normalizeHex(const String& in, char out[8]) {
+    bool ok = in.length() == 7 && in.charAt(0) == '#';
+    for (int i = 1; ok && i < 7; i++) ok = isxdigit((unsigned char)in.charAt(i));
+    if (!ok) {
+        strcpy(out, "#FFFFFF");
+        return;
+    }
+    out[0] = '#';
+    for (int i = 1; i < 7; i++) out[i] = (char)toupper((unsigned char)in.charAt(i));
+    out[7] = '\0';
+}
+
 void PomodoroManager::setColors(const String& hexWork, const String& hexShort, const String& hexLong) {
-    _colorWork = hexToRGB565(hexWork);
-    _colorShortBreak = hexToRGB565(hexShort);
-    _colorLongBreak = hexToRGB565(hexLong);
+    normalizeHex(hexWork, _hexWork);
+    normalizeHex(hexShort, _hexShortBreak);
+    normalizeHex(hexLong, _hexLongBreak);
+    _colorWork = hexToRGB565(_hexWork);
+    _colorShortBreak = hexToRGB565(_hexShortBreak);
+    _colorLongBreak = hexToRGB565(_hexLongBreak);
 
     Preferences prefs;
     prefs.begin("kubi_settings", false);
-    prefs.putString("pomoCW", hexWork);
-    prefs.putString("pomoCS", hexShort);
-    prefs.putString("pomoCL", hexLong);
+    prefs.putString("pomoCW", _hexWork);
+    prefs.putString("pomoCS", _hexShortBreak);
+    prefs.putString("pomoCL", _hexLongBreak);
     prefs.end();
 }
 
 String PomodoroManager::getColorWorkHex() const {
-    return rgb565ToHex(_colorWork);
+    return String(_hexWork);
 }
 
 String PomodoroManager::getColorShortBreakHex() const {
-    return rgb565ToHex(_colorShortBreak);
+    return String(_hexShortBreak);
 }
 
 String PomodoroManager::getColorLongBreakHex() const {
-    return rgb565ToHex(_colorLongBreak);
+    return String(_hexLongBreak);
 }
 
 uint16_t PomodoroManager::hexToRGB565(const String& hex) {

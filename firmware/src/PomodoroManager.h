@@ -76,6 +76,13 @@ private:
     uint16_t _colorShortBreak;
     uint16_t _colorLongBreak;
 
+    // The hex the user picked, echoed back verbatim: 888 -> 565 -> 888 is lossy,
+    // so round-tripping _color* made the dashboard swatch drift on every reload.
+    char _hexWork[8];
+    char _hexShortBreak[8];
+    char _hexLongBreak[8];
+    static void normalizeHex(const String& in, char out[8]);
+
     void updatePhaseDurations();
     void advancePhase();
 };
