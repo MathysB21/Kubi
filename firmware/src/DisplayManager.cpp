@@ -1,5 +1,4 @@
 #include "DisplayManager.h"
-#include "ScheduleManager.h"
 #include "AmbientFace.h"
 #include <cmath>
 
@@ -27,7 +26,6 @@ DisplayManager::DisplayManager()
       _drawnStatus(0xFF),
       _drawnColor(0),
       _drawnRoutine(-1),
-      _drawnScheduleSig(0),
       _drawnOverrideSig(0),
       _currentRotation(0) {}
 
@@ -478,146 +476,6 @@ void DisplayManager::drawMascotFace(float temperature, int hourOfDay) {
         strncpy(_drawnTemp, tempBuf, sizeof(_drawnTemp) - 1);
         _drawnTemp[sizeof(_drawnTemp) - 1] = '\0';
     }
-}
-
-void DisplayManager::drawScheduleFace(const String& dayTitle, const std::vector<ScheduleItem>& items, bool hasIcs, bool hasEvents) {
-    int w = _tft.width();
-    int h = _tft.height();
-    int cx = w / 2;
-
-    // Repaint everything only when the content changes; otherwise just the
-    // scrolling ticker rows move.
-    uint32_t sig = fnv1a(0, dayTitle.c_str());
-    sig = fnv1a(sig, hasIcs ? "I" : "i");
-    sig = fnv1a(sig, hasEvents ? "E" : "e");
-    for (size_t row = 0; row < items.size() && row < 4; row++) {
-        sig = fnv1a(sig, items[row].time.c_str());
-        sig = fnv1a(sig, items[row].name.c_str());
-    }
-    if (_scene == SCENE_SCHEDULE && sig != _drawnScheduleSig) invalidate();
-    bool full = beginScene(SCENE_SCHEDULE);
-    _drawnScheduleSig = sig;
-
-    if (full) {
-        // 1. Pink Schedule Header Text
-        _tft.setTextDatum(TC_DATUM);
-        _tft.setTextColor(TFT_PINK, TFT_BLACK);
-        _tft.drawString(dayTitle.length() > 0 ? dayTitle : "Schedule (today)", cx, 10, 2);
-        _tft.drawFastHLine(20, 28, w - 40, TFT_DARKGREY);
-    }
-
-    // 2. Empty State 1: No calendar connected
-    if (!hasIcs) {
-        if (full) {
-            _tft.setTextDatum(MC_DATUM);
-            _tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-            _tft.drawString("No calendar connected,", cx, h / 2 - 12, 2);
-            _tft.drawString("that's sad", cx, h / 2 + 12, 2);
-        }
-        return;
-    }
-
-    // 3. Empty State 2: ICS exists but no events / empty
-    if (!hasEvents || items.empty()) {
-        if (full) {
-            _tft.setTextDatum(MC_DATUM);
-            _tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-            _tft.drawString("Nothing happening,", cx, h / 2 - 12, 2);
-            _tft.drawString("I guess", cx, h / 2 + 12, 2);
-        }
-        return;
-    }
-
-    // 4. List items (up to 4 items on screen)
-    int cardH = 38;
-    int gap = 6;
-    int startY = 34;
-    int cardW = w - 30;
-
-    for (size_t row = 0; row < items.size() && row < 4; row++) {
-        int y = startY + (int)row * (cardH + gap);
-
-        String timePrefix = items[row].time.length() > 0 ? (items[row].time + " - ") : "";
-        int prefixW = _tft.textWidth(timePrefix, 2);
-        int nameStartX = 25 + prefixW;
-        int nameEndX = w - 25;
-        int availW = nameEndX - nameStartX;
-        if (availW < 50) availW = 50;
-
-        String name = items[row].name;
-        int nameW = _tft.textWidth(name, 2);
-        int textY = y + 11;
-        bool isTicker = nameW > availW;
-
-        // Static rows never change between full repaints
-        if (!full && !isTicker) continue;
-
-        // Dark card background (ticker rows overdraw their text opaquely instead)
-        if (full) {
-            _tft.fillRoundRect(15, y, cardW, cardH, 8, 0x18E3);
-        }
-
-        if (!isTicker) {
-            // Fits within card: static rendering
-            _tft.setTextDatum(TL_DATUM);
-            _tft.setTextColor(TFT_WHITE, 0x18E3);
-            if (timePrefix.length() > 0) {
-                _tft.drawString(timePrefix, 25, textY, 2);
-            }
-            _tft.drawString(name, nameStartX, textY, 2);
-        } else {
-            // Does NOT fit: moves left like a finance ticker while time & dash stay static
-            String spacer = "      ";
-            String unitStr = name + spacer;
-            int unitW = _tft.textWidth(unitStr, 2);
-            if (unitW <= 0) unitW = 100;
-
-            int offset = ((millis() / 35)) % unitW;
-            String tickerStr = unitStr + unitStr;
-
-            _tft.setTextDatum(TL_DATUM);
-            _tft.setTextColor(TFT_WHITE, 0x18E3);
-            _tft.drawString(tickerStr, nameStartX - offset, textY, 2);
-
-            // Left mask: over the time area so scrolling text does not bleed over time
-            _tft.fillRect(15, y, nameStartX - 15, cardH, 0x18E3);
-            if (timePrefix.length() > 0) {
-                _tft.drawString(timePrefix, 25, textY, 2);
-            }
-
-            // Right mask: over card right boundary
-            if (nameEndX < w - 15) {
-                _tft.fillRect(nameEndX, y, (w - 15) - nameEndX, cardH, 0x18E3);
-            }
-
-            // Screen margin masks outside card
-            _tft.fillRect(0, y, 15, cardH, TFT_BLACK);
-            _tft.fillRect(w - 15, y, 15, cardH, TFT_BLACK);
-        }
-    }
-
-    if (full) {
-        _tft.setTextDatum(BC_DATUM);
-        _tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-        _tft.drawString("Tap to cycle / Shake for today", cx, h - 4, 1);
-    }
-}
-
-void DisplayManager::drawScheduleFace(const std::vector<String>& events, int page) {
-    std::vector<ScheduleItem> items;
-    for (const auto& ev : events) {
-        int dash = ev.indexOf(" - ");
-        ScheduleItem item;
-        if (dash >= 0) {
-            item.time = ev.substring(0, dash);
-            item.name = ev.substring(dash + 3);
-        } else {
-            item.time = "";
-            item.name = ev;
-        }
-        items.push_back(item);
-    }
-    drawScheduleFace("Schedule (today)", items, true, !items.empty());
 }
 
 void DisplayManager::drawAmbientFace() {

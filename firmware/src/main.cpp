@@ -14,7 +14,6 @@
 #include "SensorManager.h"
 #include "AudioManager.h"
 #include "PomodoroManager.h"
-#include "ScheduleManager.h"
 #include "AmbientFace.h"
 #include <vector>
 
@@ -26,7 +25,6 @@
 volatile KubiMode currentMode            = MODE_CLOCK_IDLE; // Active face mode
 volatile float    roomTemperature        = 21.5f;           // BMP280 temperature
 volatile int      batteryPercentage      = 100;             // Battery telemetry
-String            secretIcalUrl          = "";              // Google Calendar iCal link
 volatile bool     isScreenOverrideActive = false;           // Brother's secret text alert flag
 
 // Custom alert banner text: see setOverrideText()/getOverrideText()
@@ -69,7 +67,6 @@ Preferences preferences;
 AsyncWebServer server(80);
 
 // --- FREERTOS TASK HANDLES ---
-TaskHandle_t TaskCore0Network;
 TaskHandle_t TaskCore1Hardware;
 TaskHandle_t TaskAudio;
 
@@ -245,30 +242,6 @@ void setupOTA() {
 
   ArduinoOTA.begin();
   Serial.println("[OTA] Kubi OTA Ready!");
-}
-
-// =============================================================================
-// CORE 0 TASK: NETWORKING & BACKGROUND SYNC
-// Handles WiFi monitoring, AsyncWebServer, and Google Calendar sync
-// =============================================================================
-void core0NetworkTask(void * parameter) {
-  uint32_t lastCalendarSync = 0;
-  const uint32_t CALENDAR_SYNC_INTERVAL_MS = 3600000; // 1 Hour
-
-  for (;;) {
-    // 1. Maintain WiFi status
-    if (WiFi.status() != WL_CONNECTED) {
-      // Reconnection monitor
-    }
-
-    // 2. Background Google Calendar iCal worker
-    if (secretIcalUrl.length() > 0 && (millis() - lastCalendarSync > CALENDAR_SYNC_INTERVAL_MS || lastCalendarSync == 0)) {
-      lastCalendarSync = millis();
-      Serial.println("[CALENDAR] Hourly sync triggered");
-    }
-
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-  }
 }
 
 // =============================================================================
@@ -501,11 +474,15 @@ void setup() {
 
   // 7. Load Persistent Settings from NVS
   preferences.begin("kubi_settings", false);
-  secretIcalUrl   = preferences.getString("icalUrl", "");
   tzOffset        = preferences.getInt("tzOffset", 2);
   clockAnalogView = preferences.getBool("clockAnalog", false);
   display.setSleepTimeoutMinutes(preferences.getInt("sleepMin", 5));
+  // Retired with the calendar face (TSK-422): drop leftovers from older firmware
+  preferences.remove("icalUrl");
   preferences.end();
+  if (LittleFS.exists("/calendar.ics")) {
+    LittleFS.remove("/calendar.ics");
+  }
 
   // 8. Sync Clock via NTP
   display.drawBootScreen("Syncing Time...");
@@ -515,9 +492,6 @@ void setup() {
     Serial.println("[NTP] Time successfully synchronized.");
   }
 
-  // 9. Initialize Schedule Manager
-  schedule.init();
-
   // 9. Attach REST API Routes & Start Web Server
   setupAPIRoutes(server);
   server.begin();
@@ -526,10 +500,10 @@ void setup() {
   display.drawBootScreen("Kubi Ready!");
   delay(500);
 
-  // 10. Launch Dual-Core FreeRTOS Tasks
-  xTaskCreatePinnedToCore(core0NetworkTask,  "Core0Network",  10000, NULL, 1, &TaskCore0Network,  0);
+  // 10. Launch the hardware/UI task. Networking runs in the WiFi and AsyncTCP
+  // tasks on core 0; audio has its own task (started above).
   xTaskCreatePinnedToCore(core1HardwareTask, "Core1Hardware", 10000, NULL, 1, &TaskCore1Hardware, 1);
-  Serial.println("[RTOS] Dual-core workers initialized.");
+  Serial.println("[RTOS] Hardware task started.");
 }
 
 // =============================================================================

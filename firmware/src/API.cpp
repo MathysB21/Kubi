@@ -5,14 +5,12 @@
 #include <LittleFS.h>
 #include <WiFi.h>
 #include "PomodoroManager.h"
-#include "ScheduleManager.h"
 #include "DisplayManager.h"
 
 // --- SHARED GLOBALS (Defined in main.cpp) ---
 extern volatile KubiMode currentMode;
 extern volatile float roomTemperature;
 extern volatile int batteryPercentage;
-extern String secretIcalUrl;
 extern volatile bool isScreenOverrideActive;
 extern bool clockAnalogView;
 
@@ -35,10 +33,6 @@ void setupAPIRoutes(AsyncWebServer& server) {
         doc["mode"] = (int)currentMode;
         doc["temp"] = roomTemperature;
         doc["battery"] = batteryPercentage;
-        doc["icalUrl"] = secretIcalUrl;
-        doc["hasIcs"] = schedule.hasIcs();
-        doc["hasEvents"] = schedule.hasEvents();
-        doc["scheduleDay"] = schedule.getCurrentDayTitle();
 
         // Detailed Pomodoro State
         JsonObject pomoObj = doc["pomodoro"].to<JsonObject>();
@@ -71,7 +65,7 @@ void setupAPIRoutes(AsyncWebServer& server) {
 
     // =========================================================================
     // 2. POST /api/settings
-    // React sends user configuration changes (Pomodoro, iCal URL, routines)
+    // React sends user configuration changes (face, Pomodoro, clock, sleep)
     // =========================================================================
     AsyncCallbackJsonWebHandler* settingsHandler = new AsyncCallbackJsonWebHandler("/api/settings", [](AsyncWebServerRequest *request, JsonVariant &json) {
         JsonObject jsonObj = json.as<JsonObject>();
@@ -85,16 +79,6 @@ void setupAPIRoutes(AsyncWebServer& server) {
                 currentMode = (KubiMode)mode;
                 display.requestWake();
             }
-        }
-
-        // 2. Calendar Sync URL
-        if (jsonObj["icalUrl"].is<const char*>()) {
-            secretIcalUrl = jsonObj["icalUrl"].as<String>();
-            Preferences prefs;
-            prefs.begin("kubi_settings", false);
-            prefs.putString("icalUrl", secretIcalUrl);
-            prefs.end();
-            schedule.setIcsUrl(secretIcalUrl);
         }
 
         // 3. Pomodoro Durations
@@ -215,32 +199,6 @@ void setupAPIRoutes(AsyncWebServer& server) {
 
         serializeJson(doc, *response);
         request->send(response);
-    });
-
-    // =========================================================================
-    // 6. CALENDAR API ROUTES
-    // =========================================================================
-    AsyncCallbackJsonWebHandler* calendarUploadHandler = new AsyncCallbackJsonWebHandler("/api/calendar/ics", [](AsyncWebServerRequest *request, JsonVariant &json) {
-        JsonObject jsonObj = json.as<JsonObject>();
-        if (jsonObj["ics"].is<const char*>()) {
-            String icsData = jsonObj["ics"].as<String>();
-            schedule.setIcsContent(icsData);
-            request->send(200, "application/json", "{\"status\":\"ics_saved\"}");
-        } else {
-            request->send(400, "application/json", "{\"error\":\"missing ics field\"}");
-        }
-    });
-    server.addHandler(calendarUploadHandler);
-
-    server.on("/api/calendar/sample", HTTP_POST, [](AsyncWebServerRequest *request) {
-        schedule.loadSampleSchedule();
-        request->send(200, "application/json", "{\"status\":\"sample_loaded\"}");
-    });
-
-    server.on("/api/calendar", HTTP_DELETE, [](AsyncWebServerRequest *request) {
-        schedule.clearIcs();
-        secretIcalUrl = "";
-        request->send(200, "application/json", "{\"status\":\"calendar_cleared\"}");
     });
 
     // =========================================================================

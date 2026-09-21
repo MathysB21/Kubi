@@ -17,7 +17,6 @@
 #include "SensorManager.h"
 #include "AudioManager.h"
 #include "PomodoroManager.h"
-#include "ScheduleManager.h"
 #include "AmbientFace.h"
 #include "API.h"
 #include "ArduinoJson.h"
@@ -45,7 +44,6 @@ bool Preferences::_loaded = false;
 volatile KubiMode currentMode            = MODE_CLOCK_IDLE;
 volatile float    roomTemperature        = 22.0f;
 volatile int      batteryPercentage      = 100;
-String            secretIcalUrl          = "";
 volatile bool     isScreenOverrideActive = false;
 
 // Mirrors main.cpp setOverrideText()/getOverrideText() (portMUX there)
@@ -319,7 +317,6 @@ int main() {
     sensors.init();
     audio.init();
     pomodoro.init();
-    schedule.init();
 
     // 2. Start hardware simulation loop and audio pump
     std::thread audioThread(audioThreadMain);
@@ -344,10 +341,6 @@ int main() {
         doc["mode"] = (int)currentMode;
         doc["temp"] = roomTemperature;
         doc["battery"] = batteryPercentage;
-        doc["icalUrl"] = secretIcalUrl.c_str();
-        doc["hasIcs"] = schedule.hasIcs();
-        doc["hasEvents"] = schedule.hasEvents();
-        doc["scheduleDay"] = schedule.getCurrentDayTitle().c_str();
 
         JsonObject pomoObj = doc["pomodoro"].to<JsonObject>();
         pomoObj["phase"]         = (int)pomodoro.getPhase();
@@ -399,11 +392,6 @@ int main() {
                 currentMode = (KubiMode)mode;
                 display.requestWake();
             }
-        }
-
-        if (jsonObj["icalUrl"].is<const char*>()) {
-            secretIcalUrl = jsonObj["icalUrl"].as<const char*>();
-            schedule.setIcsUrl(secretIcalUrl);
         }
 
         int focus = pomodoro.getFocusMinutes();
@@ -525,35 +513,6 @@ int main() {
         std::string jsonStr;
         serializeJson(doc, jsonStr);
         res.set_content(jsonStr, "application/json");
-    });
-
-    // -------------------------------------------------------------------------
-    // 6. Calendar Management Endpoints
-    // -------------------------------------------------------------------------
-    svr.Post("/api/calendar/ics", [](const httplib::Request& req, httplib::Response& res) {
-        addCors(res);
-        JsonDocument json;
-        DeserializationError err = deserializeJson(json, req.body);
-        if (err || !json["ics"].is<const char*>()) {
-            res.status = 400;
-            res.set_content("{\"error\":\"invalid or missing ics\"}", "application/json");
-            return;
-        }
-        schedule.setIcsContent(json["ics"].as<const char*>());
-        res.set_content("{\"status\":\"ics_saved\"}", "application/json");
-    });
-
-    svr.Post("/api/calendar/sample", [](const httplib::Request& req, httplib::Response& res) {
-        addCors(res);
-        schedule.loadSampleSchedule();
-        res.set_content("{\"status\":\"sample_loaded\"}", "application/json");
-    });
-
-    svr.Delete("/api/calendar", [](const httplib::Request& req, httplib::Response& res) {
-        addCors(res);
-        schedule.clearIcs();
-        secretIcalUrl = "";
-        res.set_content("{\"status\":\"calendar_cleared\"}", "application/json");
     });
 
     // -------------------------------------------------------------------------

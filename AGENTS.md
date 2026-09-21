@@ -123,7 +123,7 @@ Kubi uses **Software-in-the-Loop** simulation:
 ## 6. Desktop Simulation HAL & Preferences Persistence
 
 - Desktop mocks reside in `firmware/sim/include/`.
-- `Preferences.h` mock replicates the ESP32 NVS `Preferences` API and synchronizes key-value pairs to `kubi_sim_prefs.txt` in the working directory on `put*()` / `end()`. This ensures settings such as `clockAnalog`, Pomodoro intervals, and iCal URLs survive simulator restarts without hardware connected.
+- `Preferences.h` mock replicates the ESP32 NVS `Preferences` API and synchronizes key-value pairs to `kubi_sim_prefs.txt` in the working directory on `put*()` / `end()`. This ensures settings such as `clockAnalog`, Pomodoro intervals, and `sleepMin` survive simulator restarts without hardware connected.
 
 ---
 

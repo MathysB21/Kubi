@@ -49,15 +49,7 @@ function Manual() {
         </section>
 
         <section className="space-y-4 border-t border-zinc-800 pt-6">
-          <h2 className="text-xl font-semibold text-amber-500">4. Google Calendar Integration</h2>
-          <p className="text-zinc-400">
-            To synchronize your agenda, paste your private/secret Google Calendar iCal (.ics) URL into the Kubi Web
-            Dashboard. Kubi downloads and updates your agenda automatically in the background.
-          </p>
-        </section>
-
-        <section className="space-y-4 border-t border-zinc-800 pt-6">
-          <h2 className="text-xl font-semibold text-amber-500">5. Power &amp; Battery Care</h2>
+          <h2 className="text-xl font-semibold text-amber-500">4. Power &amp; Battery Care</h2>
           <p className="text-zinc-400">
             Powered by high-capacity 18650 lithium cells with pass-through USB-C power management. Kubi can run
             unplugged for days or remain plugged in safely on your desk.

@@ -162,7 +162,7 @@ void SensorManager::updateFace(float x, float y, float z) {
     if (absZ >= absX && absZ >= absY) {
         detected = (z > 0) ? 0 : 4; // Face 1 (Clock) or Inverted
     } else if (absX >= absY && absX >= absZ) {
-        detected = (x > 0) ? 1 : 3; // Face 2 (Pomodoro) or Face 4 (Schedule)
+        detected = (x > 0) ? 1 : 3; // Face 2 (Pomodoro) or Face 4 (Ambient)
     } else {
         detected = (y > 0) ? 2 : 5; // Face 3 (Mascot) or Bottom
     }
