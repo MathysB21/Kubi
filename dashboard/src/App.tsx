@@ -56,15 +56,6 @@ interface KubiState {
   mode: number;
   temp: number;
   battery: number;
-  isNightMode: boolean;
-  planetDawnH: number;
-  planetDawnM: number;
-  planetDuskH: number;
-  planetDuskM: number;
-  alarmHour: number;
-  alarmMinute: number;
-  cfgSundownHour: number;
-  cfgSundownMinute: number;
   sleepTimeoutMin?: number;
   isSleeping?: boolean;
   pomodoro: PomodoroState;
@@ -75,15 +66,6 @@ const DEFAULT_STATE: KubiState = {
   mode: 0,
   temp: 22.0,
   battery: 100,
-  isNightMode: false,
-  planetDawnH: 6,
-  planetDawnM: 0,
-  planetDuskH: 18,
-  planetDuskM: 0,
-  alarmHour: 8,
-  alarmMinute: 0,
-  cfgSundownHour: 18,
-  cfgSundownMinute: 0,
   pomodoro: {
     phase: 0,
     phaseName: "FOCUS",

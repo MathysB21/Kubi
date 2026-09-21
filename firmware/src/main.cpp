@@ -15,7 +15,6 @@
 #include "AudioManager.h"
 #include "PomodoroManager.h"
 #include "AmbientFace.h"
-#include <vector>
 
 // =============================================================================
 // KUBI: DESK COMPANION CUBE (ESP32 DUAL-CORE ARCHITECTURE)
@@ -59,9 +58,7 @@ volatile float diagAccelY = 0.0f;
 volatile float diagAccelZ = 1.0f;
 
 // --- CLOCK SETTINGS ---
-static bool clockShowDetails = false;
 bool clockAnalogView = false;
-static uint32_t clockDetailsTimeout = 0;
 
 // --- NETWORK & TIME CONFIG ---
 const char* ntpServer          = "pool.ntp.org";
@@ -374,7 +371,6 @@ void core1HardwareTask(void * parameter) {
           activeFace == 2 ? "Face 3 (Mascot & Temp)" : "Face 4 (Ambient)"
         );
 
-        clockShowDetails = false;
         sensors.getRecentGesture(); // Flush any transient gesture during orientation transition
         display.noteActivity();
       }
@@ -446,11 +442,6 @@ void core1HardwareTask(void * parameter) {
     display.setSleepAllowed(modeMaySleep(currentMode) && !bannerUp);
     display.setAwakeBrightness(currentMode == MODE_AMBIENT && !bannerUp ? AmbientFace::BACKLIGHT : 255);
 
-    // Auto collapse clock details
-    if (clockShowDetails && now > clockDetailsTimeout) {
-      clockShowDetails = false;
-    }
-
     // 6. Display Rendering (~20Hz tick)
     if (now - lastRenderTime >= 50 && !display.isSleeping()) {
       lastRenderTime = now;
@@ -473,7 +464,7 @@ void core1HardwareTask(void * parameter) {
 
         switch (currentMode) {
           case MODE_CLOCK_IDLE:
-            display.drawClockFace(currentHour, currentMin, currentWday, currentMday, currentMon, clockShowDetails, clockAnalogView, "Design Review 14:00", "^ AAPL +1.2% | BTC $92k");
+            display.drawClockFace(currentHour, currentMin, currentWday, currentMday, currentMon, clockAnalogView);
             break;
 
           case MODE_POMODORO:

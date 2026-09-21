@@ -54,7 +54,6 @@ public:
     String getColorLongBreakHex() const;
 
     static uint16_t hexToRGB565(const String& hex);
-    static String rgb565ToHex(uint16_t color);
 
 private:
     PomodoroPhase _phase;

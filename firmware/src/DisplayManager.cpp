@@ -188,7 +188,7 @@ void DisplayManager::drawBootScreen(const String& status) {
     _tft.drawString(status, cx, h - 30, 2);
 }
 
-void DisplayManager::drawClockFace(int hour, int minute, int wday, int mday, int month, bool showDetails, bool isAnalog, const String& nextEvent, const String& ticker) {
+void DisplayManager::drawClockFace(int hour, int minute, int wday, int mday, int month, bool isAnalog) {
     if (isAnalog) {
         drawAnalogClockFace(hour, minute, wday, mday, month);
         return;

@@ -3,7 +3,7 @@
 
 // Kubi Orientation & Operating Modes
 enum KubiMode {
-  MODE_CLOCK_IDLE       = 0, // Face 1 Up: Minimal clock + next event / ticker on tap
+  MODE_CLOCK_IDLE       = 0, // Face 1 Up: digital or analog clock (shake toggles)
   MODE_POMODORO        = 1, // Face 2 Up: Focus timer with chimes
   MODE_MASCOT_ROUTINE  = 2, // Face 3 Up: Kubi jelly animations & room temperature
   MODE_AMBIENT         = 3  // Face 4 Up: slow ambient glow (the maze may replace it)

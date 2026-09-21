@@ -252,12 +252,3 @@ uint16_t PomodoroManager::hexToRGB565(const String& hex) {
     uint8_t b = number & 0xFF;
     return ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
 }
-
-String PomodoroManager::rgb565ToHex(uint16_t color) {
-    uint8_t r = ((color >> 11) & 0x1F) * 255 / 31;
-    uint8_t g = ((color >> 5) & 0x3F) * 255 / 63;
-    uint8_t b = (color & 0x1F) * 255 / 31;
-    char buf[8];
-    snprintf(buf, sizeof(buf), "#%02X%02X%02X", r, g, b);
-    return String(buf);
-}

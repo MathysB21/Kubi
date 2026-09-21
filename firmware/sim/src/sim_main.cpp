@@ -77,9 +77,7 @@ volatile float diagAccelY = 0.0f;
 volatile float diagAccelZ = 9.8f;
 
 // --- CLOCK SETTINGS ---
-static bool clockShowDetails = false;
 static bool clockAnalogView = false;
-static uint32_t clockDetailsTimeout = 0;
 
 // Helper: Convert 16-bit RGB565 to 32-bit RGBA (for web canvas)
 static void convertRGB565toRGBA32(const uint16_t* src, uint8_t* dst, int count) {
@@ -159,7 +157,6 @@ void hardwareSimulationThread() {
                 std::cout << "[KUBI ORIENTATION] >>> Face " << (activeFace + 1)
                           << " UP: Screen rotated upright <<<" << std::endl;
 
-                clockShowDetails = false;
                 sim_injected_gesture = GESTURE_NONE;
                 sensors.getRecentGesture();
                 display.noteActivity();
@@ -194,7 +191,7 @@ void hardwareSimulationThread() {
                             sim_last_chime_time = now;
                         } else if (currentMode == MODE_POMODORO) {
                             pomodoro.handleTap();
-                            sim_last_chime_name = pomodoro.hasChimed() ? "CHIME_TAP_FEEDBACK" : "CHIME_TAP_FEEDBACK";
+                            sim_last_chime_name = "CHIME_TAP_FEEDBACK";
                             sim_last_chime_time = now;
                         } else if (currentMode == MODE_CLOCK_IDLE) {
                             audio.playChime(CHIME_TAP_FEEDBACK);
@@ -248,10 +245,6 @@ void hardwareSimulationThread() {
         display.setSleepAllowed(modeMaySleep(currentMode) && !bannerUp);
         display.setAwakeBrightness(currentMode == MODE_AMBIENT && !bannerUp ? AmbientFace::BACKLIGHT : 255);
 
-        if (clockShowDetails && now > clockDetailsTimeout) {
-            clockShowDetails = false;
-        }
-
         // 6. Display Rendering (~25Hz tick)
         if (now - lastRenderTime >= 40 && !display.isSleeping()) {
             lastRenderTime = now;
@@ -274,8 +267,7 @@ void hardwareSimulationThread() {
 
                 switch (currentMode) {
                     case MODE_CLOCK_IDLE:
-                        display.drawClockFace(currentHour, currentMin, currentWday, currentMday, currentMon, clockShowDetails, clockAnalogView,
-                                              "Design Review 14:00", "^ AAPL +1.2% | BTC $92k");
+                        display.drawClockFace(currentHour, currentMin, currentWday, currentMday, currentMon, clockAnalogView);
                         break;
 
                     case MODE_POMODORO:
@@ -623,7 +615,6 @@ int main() {
                 gravityForFace(face, sim_accel_x, sim_accel_y, sim_accel_z);
 
                 currentMode = (KubiMode)face; // rotation applied by the hardware thread
-                clockShowDetails = false;
                 sim_injected_gesture = GESTURE_NONE;
                 sensors.getRecentGesture();
             }

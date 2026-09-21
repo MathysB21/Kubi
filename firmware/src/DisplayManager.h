@@ -26,13 +26,7 @@ public:
     int  getSleepTimeoutMinutes() const { return _sleepTimeoutMin; }
 
     void drawBootScreen(const String& status);
-    void drawClockFace(int hour, int minute, int wday, int mday, int month, bool showDetails, bool isAnalog = false, const String& nextEvent = "", const String& ticker = "");
-    void drawClockFace(int hour, int minute, int wday, int mday, int month, bool showDetails, const String& nextEvent, const String& ticker = "") {
-        drawClockFace(hour, minute, wday, mday, month, showDetails, false, nextEvent, ticker);
-    }
-    void drawClockFace(int hour, int minute, bool showDetails, const String& nextEvent = "", const String& ticker = "") {
-        drawClockFace(hour, minute, -1, 1, 0, showDetails, false, nextEvent, ticker);
-    }
+    void drawClockFace(int hour, int minute, int wday, int mday, int month, bool isAnalog);
     void drawAnalogClockFace(int hour, int minute, int wday = -1, int mday = 1, int month = 0);
     void drawPomodoroFace(int remainingSeconds, int totalSeconds, const char* phaseName, bool isPaused, bool isStarted, uint16_t textColor, int currentCycle = 0, int cycleTarget = 4);
     void drawMascotFace(float temperature, int hourOfDay);
