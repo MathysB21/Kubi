@@ -1,5 +1,6 @@
 #include "DisplayManager.h"
 #include "AmbientFace.h"
+#include "MazeGame.h"
 #include "FaceMap.h"
 #include <cmath>
 
@@ -547,6 +548,11 @@ void DisplayManager::drawResetScreen() {
     _tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
     _tft.drawString("Kubi will restart", cx, cy + 56, 2);
     _tft.drawString("into setup mode.", cx, cy + 76, 2);
+}
+
+void DisplayManager::drawMazeFace() {
+    bool full = beginScene(SCENE_MAZE);
+    maze.draw(_tft, full, millis());
 }
 
 void DisplayManager::drawAmbientFace() {

@@ -32,6 +32,7 @@ public:
     void drawMascotFace(float temperature, int hourOfDay);
     void drawOverrideAlert(const String& message);
     void drawAmbientFace();
+    void drawMazeFace();
 
     // --- Onboarding / maintenance screens ---
     void drawSetupScreen();                       // captive portal is up
@@ -71,6 +72,7 @@ private:
         SCENE_MASCOT,
         SCENE_OVERRIDE,
         SCENE_AMBIENT,
+        SCENE_MAZE,
         SCENE_ADDRESS
     };
     Scene _scene;

@@ -15,6 +15,7 @@
 #include "AudioManager.h"
 #include "PomodoroManager.h"
 #include "AmbientFace.h"
+#include "MazeGame.h"
 
 // =============================================================================
 // KUBI: DESK COMPANION CUBE (ESP32 DUAL-CORE ARCHITECTURE)
@@ -59,6 +60,9 @@ volatile float diagAccelZ = 1.0f;
 
 // --- CLOCK SETTINGS ---
 bool clockAnalogView = false;
+
+// --- FACE 4 ---
+bool face4Maze = false; // false = Ambient (shipping default)
 
 // --- NETWORK & TIME CONFIG ---
 const char* ntpServer          = "pool.ntp.org";
@@ -335,6 +339,7 @@ void core1HardwareTask(void * parameter) {
   uint32_t lastPomoTick   = 0;
   uint32_t lastMotionSeen = 0;
   int previousFace = -1;
+  bool mazeWasActive = false;
 
   for (;;) {
     uint32_t now = millis();
@@ -379,6 +384,11 @@ void core1HardwareTask(void * parameter) {
     // Keep rotation in sync with currentMode, which the dashboard can also
     // change. No-op unless it differs; TFT access stays on this core.
     display.setRotationForFace((int)currentMode);
+
+    // Entering the maze face starts the current board afresh
+    bool mazeActive = mazeFaceActive(currentMode);
+    if (mazeActive && !mazeWasActive) maze.begin();
+    mazeWasActive = mazeActive;
 
     // 5. Gesture Handling (Streamlined: Tap = Dismiss/Pause/Play, Shake = Skip)
     KubiGesture gesture = sensors.getRecentGesture();
@@ -440,10 +450,11 @@ void core1HardwareTask(void * parameter) {
     }
     bool bannerUp = isScreenOverrideActive || addressScreenUntil;
     display.setSleepAllowed(modeMaySleep(currentMode) && !bannerUp);
-    display.setAwakeBrightness(currentMode == MODE_AMBIENT && !bannerUp ? AmbientFace::BACKLIGHT : 255);
+    display.setAwakeBrightness(currentMode == MODE_AMBIENT && !face4Maze && !bannerUp ? AmbientFace::BACKLIGHT : 255);
 
     // 6. Display Rendering (~20Hz tick)
-    if (now - lastRenderTime >= 50 && !display.isSleeping()) {
+    uint32_t renderTick = mazeActive ? RENDER_TICK_MAZE_MS : RENDER_TICK_MS;
+    if (now - lastRenderTime >= renderTick && !display.isSleeping()) {
       lastRenderTime = now;
 
       if (isScreenOverrideActive) {
@@ -485,7 +496,8 @@ void core1HardwareTask(void * parameter) {
             break;
 
           case MODE_AMBIENT:
-            display.drawAmbientFace();
+            if (face4Maze) display.drawMazeFace();
+            else display.drawAmbientFace();
             break;
 
           default:
@@ -565,6 +577,7 @@ void setup() {
   preferences.begin("kubi_settings", false);
   tzOffset        = preferences.getInt("tzOffset", 2);
   clockAnalogView = preferences.getBool("clockAnalog", false);
+  face4Maze       = preferences.getBool("face4Maze", false);
   display.setSleepTimeoutMinutes(preferences.getInt("sleepMin", 5));
   bool firstConnect = preferences.getBool("showAddr", false);
   if (firstConnect) preferences.remove("showAddr");

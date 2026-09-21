@@ -59,6 +59,7 @@ void setupAPIRoutes(AsyncWebServer& server) {
         doc["clockAnalog"] = clockAnalogView;
         doc["sleepTimeoutMin"] = display.getSleepTimeoutMinutes();
         doc["isSleeping"] = display.isSleeping();
+        doc["face4Maze"] = face4Maze;
 
         serializeJson(doc, *response);
         request->send(response);
@@ -119,6 +120,16 @@ void setupAPIRoutes(AsyncWebServer& server) {
             Preferences prefs;
             prefs.begin("kubi_settings", false);
             prefs.putBool("clockAnalog", clockAnalogView);
+            prefs.end();
+        }
+
+        // Face 4: Ambient (false) or Maze (true). The hardware loop notices the
+        // change and switches scenes; nothing here touches the display.
+        if (jsonObj["face4Maze"].is<bool>()) {
+            face4Maze = jsonObj["face4Maze"].as<bool>();
+            Preferences prefs;
+            prefs.begin("kubi_settings", false);
+            prefs.putBool("face4Maze", face4Maze);
             prefs.end();
         }
 

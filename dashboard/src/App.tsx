@@ -57,6 +57,7 @@ interface KubiState {
   temp: number;
   battery: number;
   sleepTimeoutMin?: number;
+  face4Maze?: boolean;
   isSleeping?: boolean;
   pomodoro: PomodoroState;
   [key: string]: any;
@@ -729,6 +730,29 @@ function KubiDashboard() {
                 </button>
               );
             })}
+          </div>
+
+          {/* Face 4 content: Ambient (default) or the tilt maze */}
+          <div className="flex items-center justify-between pt-2 border-t border-zinc-800/80">
+            <span className="text-xs text-zinc-400">Face 4 shows</span>
+            <div className="flex rounded-xl border border-zinc-800 overflow-hidden text-xs font-medium">
+              {[
+                { maze: false, label: "Ambient" },
+                { maze: true, label: "Maze (beta)" },
+              ].map((opt) => (
+                <button
+                  key={opt.label}
+                  onClick={() => mutation.mutate({ face4Maze: opt.maze })}
+                  className={`px-3 py-1.5 cursor-pointer transition-colors ${
+                    !!data.face4Maze === opt.maze
+                      ? "bg-amber-500/15 text-amber-500"
+                      : "bg-zinc-950/60 text-zinc-500 hover:text-zinc-300"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </div>
         </section>
 

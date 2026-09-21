@@ -18,6 +18,7 @@
 #include "AudioManager.h"
 #include "PomodoroManager.h"
 #include "AmbientFace.h"
+#include "MazeGame.h"
 #include "FaceMap.h"
 #include "API.h"
 #include "ArduinoJson.h"
@@ -81,6 +82,9 @@ volatile float diagAccelZ = 9.8f;
 // --- CLOCK SETTINGS ---
 static bool clockAnalogView = false;
 
+// --- FACE 4 --- (mirrors main.cpp)
+bool face4Maze = false;
+
 // Helper: Convert 16-bit RGB565 to 32-bit RGBA (for web canvas)
 static void convertRGB565toRGBA32(const uint16_t* src, uint8_t* dst, int count) {
     for (int i = 0; i < count; i++) {
@@ -108,6 +112,7 @@ void hardwareSimulationThread() {
     uint32_t lastPomoTick = 0;
     uint32_t lastMotionSeen = 0;
     int previousFace = -1;
+    bool mazeWasActive = false;
 
     while (sim_running) {
         uint32_t now = millis();
@@ -167,6 +172,10 @@ void hardwareSimulationThread() {
 
         // Mirrors main.cpp: rotation follows currentMode, applied on this thread only
         display.setRotationForFace((int)currentMode);
+
+        bool mazeActive = mazeFaceActive(currentMode);
+        if (mazeActive && !mazeWasActive) maze.begin();
+        mazeWasActive = mazeActive;
 
         // 5. Gesture Handling
         KubiGesture gesture = sensors.getRecentGesture();
@@ -245,10 +254,11 @@ void hardwareSimulationThread() {
         }
         bool bannerUp = isScreenOverrideActive || addressScreenUntil;
         display.setSleepAllowed(modeMaySleep(currentMode) && !bannerUp);
-        display.setAwakeBrightness(currentMode == MODE_AMBIENT && !bannerUp ? AmbientFace::BACKLIGHT : 255);
+        display.setAwakeBrightness(currentMode == MODE_AMBIENT && !face4Maze && !bannerUp ? AmbientFace::BACKLIGHT : 255);
 
-        // 6. Display Rendering (~25Hz tick)
-        if (now - lastRenderTime >= 40 && !display.isSleeping()) {
+        // 6. Display Rendering: same ticks as hardware (was 40 ms here, 50 there)
+        uint32_t renderTick = mazeActive ? RENDER_TICK_MAZE_MS : RENDER_TICK_MS;
+        if (now - lastRenderTime >= renderTick && !display.isSleeping()) {
             lastRenderTime = now;
 
             if (isScreenOverrideActive) {
@@ -290,7 +300,8 @@ void hardwareSimulationThread() {
                         break;
 
                     case MODE_AMBIENT:
-                        display.drawAmbientFace();
+                        if (face4Maze) display.drawMazeFace();
+                        else display.drawAmbientFace();
                         break;
 
                     default:
@@ -359,6 +370,7 @@ int main() {
     Preferences prefs;
     prefs.begin("kubi_settings", false);
     clockAnalogView = prefs.getBool("clockAnalog", false);
+    face4Maze = prefs.getBool("face4Maze", false);
     display.setSleepTimeoutMinutes(prefs.getInt("sleepMin", 5));
     prefs.end();
 
@@ -413,6 +425,7 @@ int main() {
         doc["clockAnalog"] = clockAnalogView;
         doc["sleepTimeoutMin"] = display.getSleepTimeoutMinutes();
         doc["isSleeping"] = display.isSleeping();
+        doc["face4Maze"] = face4Maze;
 
         std::string jsonStr;
         serializeJson(doc, jsonStr);
@@ -478,6 +491,14 @@ int main() {
             Preferences prefs;
             prefs.begin("kubi_settings", false);
             prefs.putBool("clockAnalog", clockAnalogView);
+            prefs.end();
+        }
+
+        if (jsonObj["face4Maze"].is<bool>()) {
+            face4Maze = jsonObj["face4Maze"].as<bool>();
+            Preferences prefs;
+            prefs.begin("kubi_settings", false);
+            prefs.putBool("face4Maze", face4Maze);
             prefs.end();
         }
 
