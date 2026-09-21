@@ -12,6 +12,7 @@ extern volatile KubiMode currentMode;
 extern volatile float roomTemperature;
 extern volatile int batteryPercentage;
 extern volatile bool isScreenOverrideActive;
+extern volatile bool factoryResetRequested;
 extern bool clockAnalogView;
 
 // Diagnostics
@@ -200,6 +201,23 @@ void setupAPIRoutes(AsyncWebServer& server) {
         serializeJson(doc, *response);
         request->send(response);
     });
+
+    // =========================================================================
+    // 6. POST /api/factory-reset
+    // Wipes settings, saved networks and stored WiFi, then restarts into setup.
+    // Requires {"confirm":"ERASE"} so a stray request cannot trigger it.
+    // =========================================================================
+    AsyncCallbackJsonWebHandler* resetHandler = new AsyncCallbackJsonWebHandler("/api/factory-reset", [](AsyncWebServerRequest *request, JsonVariant &json) {
+        JsonObject jsonObj = json.as<JsonObject>();
+        const char* confirm = jsonObj["confirm"] | "";
+        if (strcmp(confirm, FACTORY_RESET_CONFIRM) == 0) {
+            factoryResetRequested = true; // hardware loop does the wipe after we reply
+            request->send(200, "application/json", "{\"status\":\"resetting\"}");
+        } else {
+            request->send(400, "application/json", "{\"error\":\"confirm required\"}");
+        }
+    });
+    server.addHandler(resetHandler);
 
     // =========================================================================
     // 7. SERVE STATIC REACT FRONTEND FROM LITTLEFS /www

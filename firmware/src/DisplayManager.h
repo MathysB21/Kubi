@@ -39,6 +39,11 @@ public:
     void drawOverrideAlert(const String& message);
     void drawAmbientFace();
 
+    // --- Onboarding / maintenance screens ---
+    void drawSetupScreen();                       // captive portal is up
+    void drawAddressScreen(const String& ip);     // first connect: where the dashboard lives
+    void drawResetScreen();                       // factory reset in progress
+
     void setRotation(uint8_t rotation);
     void setRotationForFace(int face);
 
@@ -71,7 +76,8 @@ private:
         SCENE_POMODORO,
         SCENE_MASCOT,
         SCENE_OVERRIDE,
-        SCENE_AMBIENT
+        SCENE_AMBIENT,
+        SCENE_ADDRESS
     };
     Scene _scene;
     bool _fullRedraw;
@@ -88,6 +94,7 @@ private:
     int _drawnRoutine;
     char _drawnTemp[16];
     uint32_t _drawnOverrideSig;
+    uint32_t _drawnAddressSig;
 };
 
 extern DisplayManager display;

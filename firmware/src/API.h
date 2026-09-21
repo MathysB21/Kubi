@@ -22,5 +22,13 @@ inline bool modeMaySleep(KubiMode mode) {
 void setOverrideText(const char* text);
 String getOverrideText();
 
+// First connect after setup: how long the "open kubi.local" screen stays up
+// unless tapped away.
+#define ADDRESS_SCREEN_MS (5UL * 60UL * 1000UL)
+
+// Factory reset: body must be {"confirm":"ERASE"}. The handler only raises a
+// flag; the hardware loop shows the reset screen, wipes and restarts.
+#define FACTORY_RESET_CONFIRM "ERASE"
+
 // Declare the function that will attach all our routes
 void setupAPIRoutes(AsyncWebServer& server);

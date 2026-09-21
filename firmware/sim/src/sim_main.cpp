@@ -45,6 +45,11 @@ volatile KubiMode currentMode            = MODE_CLOCK_IDLE;
 volatile float    roomTemperature        = 22.0f;
 volatile int      batteryPercentage      = 100;
 volatile bool     isScreenOverrideActive = false;
+volatile bool     factoryResetRequested  = false;
+
+// Mirrors main.cpp first-connect address screen
+static uint32_t addressScreenUntil = 0;
+static String   addressScreenIp;
 
 // Mirrors main.cpp setOverrideText()/getOverrideText() (portMUX there)
 static char       overrideTextBuf[OVERRIDE_TEXT_MAX] = "";
@@ -94,6 +99,8 @@ static void convertRGB565toRGBA32(const uint16_t* src, uint8_t* dst, int count) 
 // Background Hardware Simulation Thread
 static std::atomic<bool> sim_running(true);
 
+void simFactoryReset();
+
 void hardwareSimulationThread() {
     std::cout << "[SIM] Core 1 Hardware Loop Started." << std::endl;
     uint32_t lastRenderTime = 0;
@@ -103,6 +110,11 @@ void hardwareSimulationThread() {
 
     while (sim_running) {
         uint32_t now = millis();
+
+        if (factoryResetRequested) {
+            simFactoryReset();
+            now = millis();
+        }
 
         // 1. Poll Sensors & Display (audio runs in its own thread, like main.cpp audioTask)
         sensors.loop();
@@ -169,7 +181,12 @@ void hardwareSimulationThread() {
                 switch (gesture) {
                     case GESTURE_TAP:
                         std::cout << "[SIM GESTURE] Tap detected." << std::endl;
-                        if (isScreenOverrideActive) {
+                        if (addressScreenUntil) {
+                            addressScreenUntil = 0;
+                            audio.playChime(CHIME_TAP_FEEDBACK);
+                            sim_last_chime_name = "CHIME_TAP_FEEDBACK";
+                            sim_last_chime_time = now;
+                        } else if (isScreenOverrideActive) {
                             isScreenOverrideActive = false;
                             audio.playChime(CHIME_TAP_FEEDBACK);
                             sim_last_chime_name = "CHIME_TAP_FEEDBACK";
@@ -223,8 +240,12 @@ void hardwareSimulationThread() {
             lastMotionSeen = motionTime;
             display.noteActivity();
         }
-        display.setSleepAllowed(modeMaySleep(currentMode) && !isScreenOverrideActive);
-        display.setAwakeBrightness(currentMode == MODE_AMBIENT && !isScreenOverrideActive ? AmbientFace::BACKLIGHT : 255);
+        if (addressScreenUntil && (int32_t)(now - addressScreenUntil) >= 0) {
+            addressScreenUntil = 0;
+        }
+        bool bannerUp = isScreenOverrideActive || addressScreenUntil;
+        display.setSleepAllowed(modeMaySleep(currentMode) && !bannerUp);
+        display.setAwakeBrightness(currentMode == MODE_AMBIENT && !bannerUp ? AmbientFace::BACKLIGHT : 255);
 
         if (clockShowDetails && now > clockDetailsTimeout) {
             clockShowDetails = false;
@@ -236,6 +257,8 @@ void hardwareSimulationThread() {
 
             if (isScreenOverrideActive) {
                 display.drawOverrideAlert(getOverrideText());
+            } else if (addressScreenUntil) {
+                display.drawAddressScreen(addressScreenIp);
             } else {
                 struct tm timeinfo;
                 int currentHour = 12, currentMin = 0;
@@ -283,6 +306,37 @@ void hardwareSimulationThread() {
 
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
+}
+
+// Mirrors main.cpp performFactoryReset(). The sim cannot reboot, so after the
+// wipe it reloads defaults and replays onboarding: the setup screen (as if
+// the portal were up) and then the first-connect address screen.
+void simFactoryReset() {
+    std::cout << "[SIM RESET] Factory reset: wiping kubi_settings and wifi_memory" << std::endl;
+    factoryResetRequested = false;
+    display.setAwakeBrightness(255);
+    display.setSleep(false);
+    display.drawResetScreen();
+
+    Preferences prefs;
+    prefs.begin("kubi_settings", false);
+    prefs.clear();
+    prefs.end();
+    prefs.begin("wifi_memory", false);
+    prefs.clear();
+    prefs.end();
+    std::this_thread::sleep_for(std::chrono::milliseconds(2500));
+
+    // "Reboot": defaults as a fresh cube would load them
+    clockAnalogView = false;
+    display.setSleepTimeoutMinutes(5);
+    pomodoro.init();
+    isScreenOverrideActive = false;
+
+    display.drawSetupScreen();
+    std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+    addressScreenIp = "127.0.0.1";
+    addressScreenUntil = millis() + ADDRESS_SCREEN_MS;
 }
 
 // Mirrors main.cpp audioTask: paced by the mock I2S queue draining at the sample rate
@@ -516,6 +570,23 @@ int main() {
     });
 
     // -------------------------------------------------------------------------
+    // 6. POST /api/factory-reset (mirrors API.cpp)
+    // -------------------------------------------------------------------------
+    svr.Post("/api/factory-reset", [](const httplib::Request& req, httplib::Response& res) {
+        addCors(res);
+        JsonDocument json;
+        deserializeJson(json, req.body);
+        const char* confirm = json["confirm"] | "";
+        if (strcmp(confirm, FACTORY_RESET_CONFIRM) == 0) {
+            factoryResetRequested = true;
+            res.set_content("{\"status\":\"resetting\"}", "application/json");
+        } else {
+            res.status = 400;
+            res.set_content("{\"error\":\"confirm required\"}", "application/json");
+        }
+    });
+
+    // -------------------------------------------------------------------------
     // 7. GET /sim/frame (Raw 32-bit RGBA Framebuffer: 240 x 320 x 4 = 307,200 bytes)
     // -------------------------------------------------------------------------
     svr.Get("/sim/frame", [](const httplib::Request& req, httplib::Response& res) {
@@ -557,6 +628,12 @@ int main() {
                 sim_injected_gesture = GESTURE_NONE;
                 sensors.getRecentGesture();
             }
+        }
+
+        // Preview the first-connect address screen without a reset
+        if (obj["showAddress"].is<bool>()) {
+            addressScreenIp = "127.0.0.1";
+            addressScreenUntil = obj["showAddress"].as<bool>() ? millis() + ADDRESS_SCREEN_MS : 0;
         }
 
         // Gesture Triggers

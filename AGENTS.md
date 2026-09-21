@@ -90,7 +90,9 @@ Kubi uses **Software-in-the-Loop** simulation:
    - In `SensorManager::updateFace()`, always update `_lastTapTime = millis()` and reset `_recentGesture = GESTURE_NONE` during candidate face transitions and when orientation settles to avoid triggering false tap gestures. Drain any pending gestures when switching faces.
 5. **C/C++ Preprocessor Comment Gotcha**:
    - Never end a single-line comment with a trailing backslash (`// \`). In standard C/C++, this joins the next line to the comment as a line continuation, deleting whatever was on that line!
-6. **When Modifying Frontend**:
+6. **Editing the Setup Portal Strings Does Not Trigger a Rebuild**:
+   - `lib/WiFiManager` pulls in `wm_strings_en.h` through `#include WM_STRINGS_FILE`, which the SCons dependency scanner cannot follow, and SCons compares content hashes, so `touch` does not help either. After editing that header, delete the library's objects before building (`Remove-Item -Recurse .pio\build\esp32dev\lib*\WiFiManager, .pio\build\esp32dev\lib*\libWiFiManager.a`) or run `pio run -t clean`. Confirm by searching `firmware.bin` for the new text.
+7. **When Modifying Frontend**:
    - Always run `npm run build` in `dashboard/` to verify TypeScript types and Vite build integrity.
 
 ---

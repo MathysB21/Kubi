@@ -26,6 +26,11 @@ volatile KubiMode currentMode            = MODE_CLOCK_IDLE; // Active face mode
 volatile float    roomTemperature        = 21.5f;           // BMP280 temperature
 volatile int      batteryPercentage      = 100;             // Battery telemetry
 volatile bool     isScreenOverrideActive = false;           // Brother's secret text alert flag
+volatile bool     factoryResetRequested  = false;           // Set by POST /api/factory-reset
+
+// First connect after setup: "open kubi.local" screen (0 = not showing)
+static uint32_t addressScreenUntil = 0;
+static String   addressScreenIp;
 
 // Custom alert banner text: see setOverrideText()/getOverrideText()
 static char        overrideTextBuf[OVERRIDE_TEXT_MAX] = "";
@@ -211,7 +216,7 @@ void connectToWiFi() {
 
   // 5. Fallback: Launch Kubi Captive Setup Portal
   Serial.println("\n[WIFI] No known networks in range. Initializing Kubi Setup Portal...");
-  display.drawBootScreen("Hotspot: Kubi-Setup");
+  display.drawSetupScreen();
   WiFiManager wifiManager;
 
   // Tell the portal which SSIDs Kubi already knows: names only. The hotspot is
@@ -256,6 +261,11 @@ void connectToWiFi() {
     if (newSSID.length() > 0) {
       saveNetworkToMemory(newSSID, newPass);
     }
+    // After the warm boot, show where the dashboard lives
+    Preferences kubiPrefs;
+    kubiPrefs.begin("kubi_settings", false);
+    kubiPrefs.putBool("showAddr", true);
+    kubiPrefs.end();
     Serial.println("[WIFI] Credentials saved! Warm-booting to flush TCP sockets...");
     delay(1000);
     ESP.restart();
@@ -296,6 +306,30 @@ void setupOTA() {
 }
 
 // =============================================================================
+// FACTORY RESET
+// Erases everything Kubi knows about its owner and restarts into setup mode.
+// Runs on the hardware task (never the web server task) and does not return.
+// =============================================================================
+void performFactoryReset() {
+  Serial.println("[RESET] Factory reset: wiping kubi_settings, wifi_memory and stored WiFi");
+  display.setAwakeBrightness(255);
+  display.setSleep(false);
+  display.drawResetScreen();
+
+  Preferences prefs;
+  prefs.begin("kubi_settings", false);
+  prefs.clear();
+  prefs.end();
+  prefs.begin("wifi_memory", false);
+  prefs.clear();
+  prefs.end();
+  WiFi.disconnect(true, true); // Wi-Fi off + erase the ESP32's own saved credentials
+
+  delay(2500);
+  ESP.restart();
+}
+
+// =============================================================================
 // CORE 1 TASK: HARDWARE, SENSORS & UI LOOP
 // High-frequency (~50-60Hz) hardware orchestration: IMU, Audio, Display
 // =============================================================================
@@ -307,6 +341,10 @@ void core1HardwareTask(void * parameter) {
 
   for (;;) {
     uint32_t now = millis();
+
+    if (factoryResetRequested) {
+      performFactoryReset();
+    }
 
     // 1. Poll Sensors & Display (audio runs in its own task)
     sensors.loop();
@@ -354,7 +392,10 @@ void core1HardwareTask(void * parameter) {
       } else {
         switch (gesture) {
           case GESTURE_TAP:
-            if (isScreenOverrideActive) {
+            if (addressScreenUntil) {
+              addressScreenUntil = 0; // Owner has the address: back to the faces
+              audio.playChime(CHIME_TAP_FEEDBACK);
+            } else if (isScreenOverrideActive) {
               isScreenOverrideActive = false; // Dismiss override
               audio.playChime(CHIME_TAP_FEEDBACK);
             } else if (currentMode == MODE_POMODORO) {
@@ -398,8 +439,12 @@ void core1HardwareTask(void * parameter) {
       lastMotionSeen = motionTime;
       display.noteActivity();
     }
-    display.setSleepAllowed(modeMaySleep(currentMode) && !isScreenOverrideActive);
-    display.setAwakeBrightness(currentMode == MODE_AMBIENT && !isScreenOverrideActive ? AmbientFace::BACKLIGHT : 255);
+    if (addressScreenUntil && (int32_t)(now - addressScreenUntil) >= 0) {
+      addressScreenUntil = 0;
+    }
+    bool bannerUp = isScreenOverrideActive || addressScreenUntil;
+    display.setSleepAllowed(modeMaySleep(currentMode) && !bannerUp);
+    display.setAwakeBrightness(currentMode == MODE_AMBIENT && !bannerUp ? AmbientFace::BACKLIGHT : 255);
 
     // Auto collapse clock details
     if (clockShowDetails && now > clockDetailsTimeout) {
@@ -412,6 +457,8 @@ void core1HardwareTask(void * parameter) {
 
       if (isScreenOverrideActive) {
         display.drawOverrideAlert(getOverrideText());
+      } else if (addressScreenUntil) {
+        display.drawAddressScreen(addressScreenIp);
       } else {
         struct tm timeinfo;
         int currentHour = 12, currentMin = 0;
@@ -528,6 +575,8 @@ void setup() {
   tzOffset        = preferences.getInt("tzOffset", 2);
   clockAnalogView = preferences.getBool("clockAnalog", false);
   display.setSleepTimeoutMinutes(preferences.getInt("sleepMin", 5));
+  bool firstConnect = preferences.getBool("showAddr", false);
+  if (firstConnect) preferences.remove("showAddr");
   // Retired with the calendar face (TSK-422): drop leftovers from older firmware
   preferences.remove("icalUrl");
   preferences.end();
@@ -548,8 +597,13 @@ void setup() {
   server.begin();
   Serial.println("[HTTP] AsyncWebServer listening on port 80");
 
-  display.drawBootScreen("Kubi Ready!");
-  delay(500);
+  String ip = WiFi.localIP().toString();
+  if (firstConnect) {
+    addressScreenIp = ip;
+    addressScreenUntil = millis() + ADDRESS_SCREEN_MS;
+  }
+  display.drawBootScreen("Ready at " + ip);
+  delay(1500);
 
   // 10. Launch the hardware/UI task. Networking runs in the WiFi and AsyncTCP
   // tasks on core 0; audio has its own task (started above).

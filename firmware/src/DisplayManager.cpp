@@ -27,6 +27,7 @@ DisplayManager::DisplayManager()
       _drawnColor(0),
       _drawnRoutine(-1),
       _drawnOverrideSig(0),
+      _drawnAddressSig(0),
       _currentRotation(0) {}
 
 void DisplayManager::init() {
@@ -476,6 +477,80 @@ void DisplayManager::drawMascotFace(float temperature, int hourOfDay) {
         strncpy(_drawnTemp, tempBuf, sizeof(_drawnTemp) - 1);
         _drawnTemp[sizeof(_drawnTemp) - 1] = '\0';
     }
+}
+
+// Shown while the Kubi-Setup hotspot is up. Not steady state: full repaint.
+void DisplayManager::drawSetupScreen() {
+    int cx = _tft.width() / 2;
+    _scene = SCENE_BOOT;
+    _fullRedraw = true;
+    _tft.fillScreen(TFT_BLACK);
+    _tft.setTextDatum(MC_DATUM);
+
+    _tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    _tft.drawString("Hello!", cx, 40, 4);
+
+    _tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    _tft.drawString("On your phone,", cx, 90, 2);
+    _tft.drawString("join this WiFi:", cx, 110, 2);
+    _tft.setTextColor(TFT_GOLD, TFT_BLACK);
+    _tft.drawString("Kubi-Setup", cx, 142, 4);
+
+    _tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    _tft.drawString("A page will open.", cx, 192, 2);
+    _tft.drawString("If not, go to", cx, 212, 2);
+    _tft.setTextColor(TFT_GOLD, TFT_BLACK);
+    _tft.drawString("192.168.4.1", cx, 236, 2);
+
+    _tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    _tft.drawString("then pick your WiFi", cx, 280, 2);
+}
+
+// First boot after setup: tell the owner where the dashboard is. Stays up until
+// tapped (the caller owns the timeout); only repaints if the address changes.
+void DisplayManager::drawAddressScreen(const String& ip) {
+    uint32_t sig = fnv1a(0, ip.c_str());
+    if (_scene == SCENE_ADDRESS && sig != _drawnAddressSig) invalidate();
+    if (!beginScene(SCENE_ADDRESS)) return;
+    _drawnAddressSig = sig;
+
+    int cx = _tft.width() / 2;
+    int cy = _tft.height() / 2;
+    _tft.setTextDatum(MC_DATUM);
+
+    _tft.setTextColor(TFT_GOLD, TFT_BLACK);
+    _tft.drawString("You're connected!", cx, cy - 100, 2);
+
+    _tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    _tft.drawString("On your phone, open", cx, cy - 60, 2);
+    _tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    _tft.drawString("kubi.local", cx, cy - 28, 4);
+
+    _tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    _tft.drawString("or", cx, cy + 4, 2);
+    _tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    _tft.drawString(ip, cx, cy + 36, 4);
+
+    _tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    _tft.drawString("Tap Kubi when done", cx, cy + 100, 2);
+}
+
+void DisplayManager::drawResetScreen() {
+    int cx = _tft.width() / 2;
+    int cy = _tft.height() / 2;
+    _scene = SCENE_BOOT;
+    _fullRedraw = true;
+    _tft.fillScreen(TFT_BLACK);
+    _tft.setTextDatum(MC_DATUM);
+
+    _tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    _tft.drawString("Factory reset", cx, cy - 40, 4);
+    _tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    _tft.drawString("Erasing WiFi and", cx, cy, 2);
+    _tft.drawString("all settings...", cx, cy + 20, 2);
+    _tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    _tft.drawString("Kubi will restart", cx, cy + 56, 2);
+    _tft.drawString("into setup mode.", cx, cy + 76, 2);
 }
 
 void DisplayManager::drawAmbientFace() {

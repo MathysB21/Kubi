@@ -5,6 +5,7 @@ import {
   Sparkles,
   Activity,
   RefreshCw,
+  TriangleAlert,
   Wifi,
   Battery,
   Thermometer,
@@ -27,6 +28,7 @@ import {
   QueryClientProvider,
 } from "@tanstack/react-query";
 import { Toaster, toast } from "sonner";
+import { useState } from "react";
 import { SpinningCube } from "./components/SpinningCube";
 import { Link } from "react-router";
 
@@ -211,6 +213,29 @@ function KubiDashboard() {
   });
 
   const activeFace = FACE_MODES[data.mode] || FACE_MODES[0];
+  // 4. Factory reset (two-step: the button only arms the confirm panel)
+  const [resetArmed, setResetArmed] = useState(false);
+  const factoryResetMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/factory-reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: "ERASE" }),
+      });
+      if (!res.ok) throw new Error("Reset refused");
+      return res.json();
+    },
+    onSuccess: () => {
+      setResetArmed(false);
+      toast.success("Kubi is erasing everything and restarting. Join the Kubi-Setup WiFi to set it up again.", {
+        duration: 15000,
+      });
+    },
+    onError: () => {
+      toast.error("Kubi did not accept the reset");
+    },
+  });
+
   const pomo = data.pomodoro || DEFAULT_STATE.pomodoro;
 
   // Resolve current active color for Pomodoro
@@ -449,6 +474,52 @@ function KubiDashboard() {
               <span className="font-mono text-zinc-300">/api/override</span>
             </div>
           </div>
+        </div>
+      ),
+    },
+    // FACTORY RESET ITEM
+    {
+      headerContent: (
+        <div className="flex items-center gap-3 font-medium text-zinc-100">
+          <TriangleAlert size={18} className="text-rose-400" /> Factory Reset
+        </div>
+      ),
+      bodyContent: (
+        <div className="space-y-4 text-sm">
+          <p className="text-xs text-zinc-500 leading-relaxed">
+            Erases every saved WiFi network and all settings (Pomodoro, clock style, screen sleep), then
+            restarts Kubi into setup mode as if it were new.
+          </p>
+          {!resetArmed ? (
+            <button
+              onClick={() => setResetArmed(true)}
+              className="w-full py-2.5 rounded-xl text-xs font-medium bg-zinc-950 hover:bg-rose-500/10 text-rose-400 border border-zinc-800 hover:border-rose-500/40 transition-colors cursor-pointer"
+            >
+              Factory reset...
+            </button>
+          ) : (
+            <div className="space-y-3 p-4 rounded-2xl bg-rose-500/5 border border-rose-500/30">
+              <p className="text-xs text-rose-200 leading-relaxed">
+                This can't be undone. Kubi will disconnect from this WiFi. To use it again, join the{" "}
+                <span className="font-mono">Kubi-Setup</span> network and pick a WiFi.
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => setResetArmed(false)}
+                  className="py-2.5 rounded-xl text-xs font-medium bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-700 transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => factoryResetMutation.mutate()}
+                  disabled={factoryResetMutation.isPending}
+                  className="py-2.5 rounded-xl text-xs font-semibold bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/50 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  {factoryResetMutation.isPending ? "Erasing..." : "Erase everything"}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       ),
     },
