@@ -1,5 +1,7 @@
 #include "MazeGame.h"
 #include "FaceMap.h"
+#include "AudioManager.h"
+#include <Preferences.h>
 #include <string.h>
 #include <math.h>
 
@@ -17,6 +19,7 @@ static const uint16_t COL_GOAL_B      = 0x8400;
 static const uint16_t COL_BALL        = 0xE71C;  // soft white
 static const uint16_t COL_BALL_SHADE  = 0x9CD3;
 static const uint16_t COL_HUD         = 0x7BEF;
+static const uint16_t COL_HUD_TIME    = 0xFEA0;
 
 static const int   HUD_H = 16;
 static const float BALL_RADIUS = 0.32f;  // cell units
@@ -33,17 +36,30 @@ static const float FILTER_ALPHA = 0.35f;  // accelerometer low-pass per sample
 static const uint32_t CALIBRATE_MS = 250;
 static const int MAZE_FACE = 3;          // Face 4 slot (MODE_AMBIENT); frame from FaceMap.h
 
+// --- Game rules ---
+static const float    HOLE_CAPTURE = 0.30f;  // centre this close to a hole centre -> falls in
+static const float    GOAL_CAPTURE = 0.40f;
+static const uint32_t FALL_MS      = 500;    // shrink animation, then back to S
+static const uint32_t WON_MS       = 3000;   // time/best banner before the next board
+static const uint32_t MAX_TIME_MS  = 999900; // HUD shows at most 999.9 s
+
 MazeGame::MazeGame()
     : _board(0), _startX(1.5f), _startY(1.5f), _bx(1.5f), _by(1.5f),
       _vx(0), _vy(0), _fx(0), _fy(0), _fz(0), _restX(0), _restY(0), _restZ(0),
       _haveFilter(false), _calibrating(true), _calStart(0),
       _calSumX(0), _calSumY(0), _calSumZ(0), _calN(0), _lastUpdateMs(0), _stepAccum(0), _lastInputMs(0),
-      _cell(16), _ox(0), _oy(HUD_H), _drawnBallX(-1), _drawnBallY(-1) {
+      _state(MAZE_READY), _stateSince(0), _runStart(0), _finishMs(0), _best(0), _newBest(false), _ballScale(1.0f),
+      _cell(16), _ox(0), _oy(HUD_H), _drawnBallX(-1), _drawnBallY(-1), _drawnBallR(0),
+      _drawnTenths(-1), _drawnState(MAZE_READY), _needFull(true) {
     memset(_cells, '#', sizeof(_cells));
 }
 
 void MazeGame::begin() {
-    loadBoard(_board);
+    Preferences prefs;
+    prefs.begin("kubi_settings", true);
+    int saved = prefs.getInt("mzCur", 0);
+    prefs.end();
+    loadBoard(saved);
 }
 
 void MazeGame::loadBoard(int index) {
@@ -68,10 +84,32 @@ void MazeGame::loadBoard(int index) {
     _bx = _startX;
     _by = _startY;
     _vx = _vy = 0;
-    _drawnBallX = _drawnBallY = -1;
+    _ballScale = 1.0f;
     _calibrating = true;   // re-zero on the next update()
     _calStart = 0;
     _lastInputMs = 0;
+    _state = MAZE_READY;
+    _stateSince = 0;
+    _runStart = 0;
+    _finishMs = 0;
+    _newBest = false;
+    _needFull = true;
+
+    // Best time for this board, and remember where we are
+    char key[8];
+    snprintf(key, sizeof(key), "mzb%d", _board);
+    Preferences prefs;
+    prefs.begin("kubi_settings", false);
+    _best = (uint32_t)prefs.getInt(key, 0);
+    prefs.putInt("mzCur", _board);
+    prefs.end();
+}
+
+uint32_t MazeGame::elapsedMs(uint32_t nowMs) const {
+    uint32_t t = 0;
+    if (_state == MAZE_WON) t = _finishMs;
+    else if (_state != MAZE_READY) t = nowMs - _runStart;
+    return t > MAX_TIME_MS ? MAX_TIME_MS : t;
 }
 
 void MazeGame::startCalibration(uint32_t nowMs) {
@@ -105,6 +143,28 @@ void MazeGame::update(float ax, float ay, float az, uint32_t nowMs) {
         return;
     }
 
+    // Timed states: the ball does not roll
+    if (_state == MAZE_FALLING) {
+        _ballScale = 1.0f - (float)(nowMs - _stateSince) / FALL_MS;
+        if (nowMs - _stateSince >= FALL_MS) {
+            _bx = _startX;
+            _by = _startY;
+            _vx = _vy = 0;
+            _ballScale = 1.0f;
+            setState(MAZE_RUNNING, nowMs);  // the clock kept running: that is the penalty
+        }
+        _lastUpdateMs = nowMs;
+        return;
+    }
+    if (_state == MAZE_WON) {
+        if (nowMs - _stateSince >= WON_MS) {
+            loadBoard(_board + 1);
+            _lastInputMs = nowMs; // still playing: keep the face lock through the board change
+        }
+        _lastUpdateMs = nowMs;
+        return;
+    }
+
     // Tilt relative to rest, projected onto the maze face's screen axes
     // (FaceMap.h, shared with the sim's tilt injection).
     KVec3 up, right, out;
@@ -120,15 +180,22 @@ void MazeGame::update(float ax, float ay, float az, uint32_t nowMs) {
         float k = (mag - DEADZONE) / mag;  // continuous past the deadzone
         tiltX *= k;
         tiltY *= k;
-        if (mag > DEADZONE * 1.5f) _lastInputMs = nowMs ? nowMs : 1; // deliberate tilt: playing
+        if (mag > DEADZONE * 1.5f) {
+            _lastInputMs = nowMs ? nowMs : 1; // deliberate tilt: playing
+            if (_state == MAZE_READY) {
+                _runStart = nowMs;
+                setState(MAZE_RUNNING, nowMs);
+            }
+        }
     }
 
     float dt = (nowMs - _lastUpdateMs) / 1000.0f;
     _lastUpdateMs = nowMs;
     if (dt > MAX_FRAME_S) dt = MAX_FRAME_S;
     _stepAccum += dt;
-    while (_stepAccum >= STEP_S) {
+    while (_stepAccum >= STEP_S && (_state == MAZE_READY || _state == MAZE_RUNNING)) {
         step(STEP_S, tiltX, tiltY);
+        checkCells(nowMs);
         _stepAccum -= STEP_S;
     }
 }
@@ -144,6 +211,39 @@ void MazeGame::step(float dt, float tiltX, float tiltY) {
     _bx += _vx * dt;
     _by += _vy * dt;
     collide();
+}
+
+// Holes and the goal, checked after every physics step
+void MazeGame::checkCells(uint32_t nowMs) {
+    int c = (int)floorf(_bx), r = (int)floorf(_by);
+    char cell = cellAt(c, r);
+    float dx = _bx - (c + 0.5f), dy = _by - (r + 0.5f);
+    float dist = sqrtf(dx * dx + dy * dy);
+
+    if (cell == 'O' && dist < HOLE_CAPTURE) {
+        _bx = c + 0.5f;  // drop into the middle of the hole
+        _by = r + 0.5f;
+        _vx = _vy = 0;
+        if (_state == MAZE_READY) _runStart = nowMs;
+        setState(MAZE_FALLING, nowMs);
+        audio.playChime(CHIME_SLAM_OUCH);
+    } else if (cell == 'G' && dist < GOAL_CAPTURE) {
+        _vx = _vy = 0;
+        _finishMs = (_state == MAZE_READY) ? 0 : nowMs - _runStart;
+        if (_finishMs > MAX_TIME_MS) _finishMs = MAX_TIME_MS;
+        _newBest = (_best == 0 || _finishMs < _best);
+        if (_newBest) {
+            _best = _finishMs;
+            char key[8];
+            snprintf(key, sizeof(key), "mzb%d", _board);
+            Preferences prefs;
+            prefs.begin("kubi_settings", false);
+            prefs.putInt(key, (int)_best);
+            prefs.end();
+        }
+        setState(MAZE_WON, nowMs);
+        audio.playChime(_newBest ? CHIME_POMODORO_LONG_BREAK : CHIME_POMODORO_DONE);
+    }
 }
 
 // Circle vs. wall cells: push out along the contact normal and reflect the
@@ -206,6 +306,7 @@ void MazeGame::layout(TFT_eSPI& tft) {
 }
 
 void MazeGame::drawCell(TFT_eSPI& tft, int c, int r) {
+    if (c < 0 || r < 0 || c >= MAZE_COLS || r >= MAZE_ROWS) return;
     int x = _ox + c * _cell;
     int y = _oy + r * _cell;
     int s = _cell;
@@ -236,16 +337,16 @@ void MazeGame::drawCell(TFT_eSPI& tft, int c, int r) {
     }
 }
 
-void MazeGame::drawBall(TFT_eSPI& tft, int px, int py) {
-    int r = (int)(BALL_RADIUS * _cell + 0.5f);
+void MazeGame::drawBall(TFT_eSPI& tft, int px, int py, int r) {
+    if (r <= 0) return;
     tft.fillCircle(px, py, r, COL_BALL_SHADE);
-    tft.fillCircle(px - 1, py - 1, r - 1, COL_BALL);
-    tft.drawPixel(px - r / 2, py - r / 2, TFT_WHITE);
+    if (r > 1) tft.fillCircle(px - 1, py - 1, r - 1, COL_BALL);
+    if (r > 2) tft.drawPixel(px - r / 2, py - r / 2, TFT_WHITE);
 }
 
-// Repaint the board cells under the ball's previous bounding box
-void MazeGame::restoreUnder(TFT_eSPI& tft, int px, int py) {
-    int r = (int)(BALL_RADIUS * _cell + 0.5f) + 1;
+// Repaint the board cells under a ball drawn at (px, py) with radius r
+void MazeGame::restoreUnder(TFT_eSPI& tft, int px, int py, int r) {
+    r += 1;
     int c0 = (px - r - _ox) / _cell, c1 = (px + r - _ox) / _cell;
     int r0 = (py - r - _oy) / _cell, r1 = (py + r - _oy) / _cell;
     for (int rr = r0; rr <= r1; rr++)
@@ -254,33 +355,79 @@ void MazeGame::restoreUnder(TFT_eSPI& tft, int px, int py) {
 }
 
 void MazeGame::drawHud(TFT_eSPI& tft, bool full, uint32_t nowMs) {
-    (void)nowMs;
-    if (!full) return;
-    char buf[40];
-    snprintf(buf, sizeof(buf), "%d/%d  %s", _board + 1, MAZE_BOARD_COUNT, MAZE_BOARDS[_board].name);
-    tft.setTextDatum(ML_DATUM);
-    tft.setTextColor(COL_HUD, TFT_BLACK);
-    tft.drawString(buf, _ox + 2, HUD_H / 2, 1);
+    int w = tft.width();
+    tft.setTextPadding(0);
+    if (full) {
+        char buf[40];
+        snprintf(buf, sizeof(buf), "%d/%d  %s", _board + 1, MAZE_BOARD_COUNT, MAZE_BOARDS[_board].name);
+        tft.setTextDatum(ML_DATUM);
+        tft.setTextColor(COL_HUD, TFT_BLACK);
+        tft.drawString(buf, _ox + 2, HUD_H / 2, 1);
+    }
+
+    // Right side: live time (tenths) and the board's best; repaint on change only
+    int tenths = (int)(elapsedMs(nowMs) / 100);
+    if (_state == MAZE_READY) tenths = -2;
+    if (!full && tenths == _drawnTenths && _state == _drawnState) return;
+    _drawnTenths = tenths;
+
+    char right[40];
+    char best[16];
+    if (_best) snprintf(best, sizeof(best), "best %lu.%lus", (unsigned long)(_best / 1000), (unsigned long)((_best / 100) % 10));
+    else snprintf(best, sizeof(best), "best --");
+    if (_state == MAZE_READY) snprintf(right, sizeof(right), "tilt to start   %s", best);
+    else snprintf(right, sizeof(right), "%d.%ds   %s", tenths / 10, tenths % 10, best);
+
+    tft.setTextDatum(MR_DATUM);
+    tft.setTextColor(_state == MAZE_READY ? COL_HUD : COL_HUD_TIME, TFT_BLACK);
+    tft.setTextPadding(w / 2);
+    tft.drawString(right, w - _ox - 2, HUD_H / 2, 1);
+    tft.setTextPadding(0);
+}
+
+void MazeGame::drawWinBanner(TFT_eSPI& tft) {
+    int cx = tft.width() / 2;
+    int cy = _oy + (_cell * MAZE_ROWS) / 2;
+    tft.fillRoundRect(cx - 90, cy - 36, 180, 72, 10, TFT_BLACK);
+    tft.drawRoundRect(cx - 90, cy - 36, 180, 72, 10, COL_GOAL_A);
+    char buf[24];
+    snprintf(buf, sizeof(buf), "%lu.%lus", (unsigned long)(_finishMs / 1000), (unsigned long)((_finishMs / 100) % 10));
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.drawString(buf, cx, cy - 10, 4);
+    tft.setTextColor(_newBest ? COL_GOAL_A : COL_HUD, TFT_BLACK);
+    tft.drawString(_newBest ? "NEW BEST!" : "Nice!", cx, cy + 20, 2);
 }
 
 void MazeGame::draw(TFT_eSPI& tft, bool full, uint32_t nowMs) {
+    if (_needFull && !full) {
+        tft.fillScreen(TFT_BLACK);  // new board: not steady state
+        full = true;
+    }
     if (full) {
+        _needFull = false;
         layout(tft);
         for (int r = 0; r < MAZE_ROWS; r++)
             for (int c = 0; c < MAZE_COLS; c++)
                 drawCell(tft, c, r);
         _drawnBallX = _drawnBallY = -1;
+        _drawnTenths = -1;
     }
 
-    // Only the ball moves: restore what it covered, then draw it again
+    // Only the ball moves: restore what it covered, then draw it again.
+    // (It sits still while the win banner is up, so the banner stays intact.)
     int px = _ox + (int)(_bx * _cell + 0.5f);
     int py = _oy + (int)(_by * _cell + 0.5f);
-    if (px != _drawnBallX || py != _drawnBallY) {
-        if (_drawnBallX >= 0) restoreUnder(tft, _drawnBallX, _drawnBallY);
-        drawBall(tft, px, py);
+    int r = (int)(BALL_RADIUS * _cell * (_ballScale > 0 ? _ballScale : 0) + 0.5f);
+    if (px != _drawnBallX || py != _drawnBallY || r != _drawnBallR) {
+        if (_drawnBallX >= 0) restoreUnder(tft, _drawnBallX, _drawnBallY, _drawnBallR);
+        drawBall(tft, px, py, r);
         _drawnBallX = px;
         _drawnBallY = py;
+        _drawnBallR = r;
     }
+    if (_state == MAZE_WON && (full || _drawnState != MAZE_WON)) drawWinBanner(tft);
 
     drawHud(tft, full, nowMs);
+    _drawnState = _state;
 }

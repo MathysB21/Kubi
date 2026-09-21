@@ -725,6 +725,16 @@ int main() {
         doc["mode"] = (int)currentMode;
         doc["isAnalog"] = clockAnalogView;
         doc["pixelWrites"] = sim_pixel_writes;
+        if (face4Maze) {
+            JsonObject m = doc["maze"].to<JsonObject>();
+            m["board"] = maze.boardIndex();
+            m["state"] = (int)maze.state();   // 0 ready, 1 running, 2 falling, 3 won
+            m["timeMs"] = maze.elapsedMs(millis());
+            m["bestMs"] = maze.bestMs();
+            m["x"] = maze.ballX();
+            m["y"] = maze.ballY();
+            m["playing"] = maze.isPlaying(millis());
+        }
         doc["audioReady"] = audio.isReady();
         if (const AudioOutputI2S* out = audio.getOutput()) {
             doc["audioSamples"] = out->getSamplesWritten();

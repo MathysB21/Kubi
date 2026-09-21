@@ -11,6 +11,13 @@
 // the maze face can never be stuck there.
 #define MAZE_IDLE_UNLOCK_MS 45000
 
+enum MazeState : uint8_t {
+    MAZE_READY = 0,   // ball on S, timer waits for the first deliberate tilt
+    MAZE_RUNNING,     // timer running
+    MAZE_FALLING,     // dropping into a hole; respawns on S, timer keeps running
+    MAZE_WON          // at the goal: time + best shown, then the next board
+};
+
 class MazeGame {
 public:
     MazeGame();
@@ -33,6 +40,9 @@ public:
         return _lastInputMs != 0 && nowMs - _lastInputMs < MAZE_IDLE_UNLOCK_MS;
     }
 
+    MazeState state() const { return _state; }
+    uint32_t elapsedMs(uint32_t nowMs) const;
+    uint32_t bestMs() const { return _best; }       // 0 = no best yet
     void placeBall(float x, float y) { _bx = x; _by = y; }
     int  boardIndex() const { return _board; }
     float ballX() const { return _bx; }
@@ -57,20 +67,36 @@ private:
     float _stepAccum;
     uint32_t _lastInputMs;         // 0 = no input since the board started
 
+    // Game state
+    MazeState _state;
+    uint32_t _stateSince;
+    uint32_t _runStart;
+    uint32_t _finishMs;
+    uint32_t _best;
+    bool     _newBest;
+    float    _ballScale;           // 1 = normal, shrinks while falling
+
     void startCalibration(uint32_t nowMs);
     void step(float dt, float tiltX, float tiltY);
     void collide();
+    void checkCells(uint32_t nowMs);
+    void setState(MazeState s, uint32_t nowMs) { _state = s; _stateSince = nowMs; }
 
     // Renderer state (valid while the scene is unchanged)
     int _cell, _ox, _oy;           // cell size and board origin in px
     int _drawnBallX, _drawnBallY;  // px, -1 = not drawn
+    int _drawnBallR;
+    int _drawnTenths;
+    MazeState _drawnState;
+    bool _needFull;                // board changed: repaint everything
 
     char cellAt(int c, int r) const;
     void layout(TFT_eSPI& tft);
     void drawCell(TFT_eSPI& tft, int c, int r);
-    void drawBall(TFT_eSPI& tft, int px, int py);
-    void restoreUnder(TFT_eSPI& tft, int px, int py);
+    void drawBall(TFT_eSPI& tft, int px, int py, int r);
+    void restoreUnder(TFT_eSPI& tft, int px, int py, int r);
     void drawHud(TFT_eSPI& tft, bool full, uint32_t nowMs);
+    void drawWinBanner(TFT_eSPI& tft);
 };
 
 extern MazeGame maze;
