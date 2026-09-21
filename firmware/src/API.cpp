@@ -244,8 +244,18 @@ void setupAPIRoutes(AsyncWebServer& server) {
     });
 
     // =========================================================================
-    // 7. SERVE STATIC REACT FRONTEND FROM LITTLEFS
-    // Default file: index.html
+    // 7. SERVE STATIC REACT FRONTEND FROM LITTLEFS /www
+    // Only the web build lives under /www (Vite outDir firmware/data/www), so
+    // nothing else on the filesystem is reachable over HTTP.
     // =========================================================================
-    server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
+    server.serveStatic("/", LittleFS, "/www/").setDefaultFile("index.html");
+
+    // Client-side routes (/manual) have no file: hand them the SPA shell.
+    server.onNotFound([](AsyncWebServerRequest *request) {
+        if (request->method() == HTTP_GET && !request->url().startsWith("/api/")) {
+            request->send(LittleFS, "/www/index.html", "text/html");
+        } else {
+            request->send(404, "application/json", "{\"error\":\"not found\"}");
+        }
+    });
 }

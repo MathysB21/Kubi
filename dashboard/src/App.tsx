@@ -846,11 +846,15 @@ function KubiDashboard() {
 
         {/* 4. MANUAL & SIMULATOR LINKS */}
         <div className="pt-12 flex items-center justify-center gap-6">
-          <Link to="/sim" className="text-amber-500 hover:text-amber-400 text-xs font-semibold tracking-widest uppercase transition-colors flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-            Launch Virtual Hardware Workbench
-          </Link>
-          <span className="text-zinc-700">•</span>
+          {__KUBI_SIM__ && (
+            <>
+              <Link to="/sim" className="text-amber-500 hover:text-amber-400 text-xs font-semibold tracking-widest uppercase transition-colors flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                Launch Virtual Hardware Workbench
+              </Link>
+              <span className="text-zinc-700">•</span>
+            </>
+          )}
           <Link to="/manual" className="text-zinc-400 hover:text-amber-500 text-xs underline tracking-widest uppercase transition-colors">
             Kubi User Manual &amp; Gestures Guide
           </Link>
