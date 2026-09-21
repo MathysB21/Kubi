@@ -317,6 +317,10 @@ void core1HardwareTask(void * parameter) {
       }
     }
 
+    // Keep rotation in sync with currentMode, which the dashboard can also
+    // change. No-op unless it differs; TFT access stays on this core.
+    display.setRotationForFace((int)currentMode);
+
     // 5. Gesture Handling (Streamlined: Tap = Dismiss/Pause/Play, Shake = Skip)
     KubiGesture gesture = sensors.getRecentGesture();
     if (gesture != GESTURE_NONE) {

@@ -77,9 +77,14 @@ void setupAPIRoutes(AsyncWebServer& server) {
         JsonObject jsonObj = json.as<JsonObject>();
 
         // 1. Mode Change
+        // The core-1 loop applies the matching screen rotation; never touch the
+        // TFT from this (AsyncTCP) task.
         if (jsonObj["mode"].is<int>()) {
-            currentMode = (KubiMode)jsonObj["mode"].as<int>();
-            display.requestWake();
+            int mode = jsonObj["mode"].as<int>();
+            if (mode >= MODE_CLOCK_IDLE && mode <= MODE_SCHEDULE_AGENDA) {
+                currentMode = (KubiMode)mode;
+                display.requestWake();
+            }
         }
 
         // 2. Calendar Sync URL

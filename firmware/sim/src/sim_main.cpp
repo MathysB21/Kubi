@@ -154,6 +154,9 @@ void hardwareSimulationThread() {
             }
         }
 
+        // Mirrors main.cpp: rotation follows currentMode, applied on this thread only
+        display.setRotationForFace((int)currentMode);
+
         // 5. Gesture Handling
         KubiGesture gesture = sensors.getRecentGesture();
         KubiGesture injected = sim_injected_gesture.exchange(GESTURE_NONE);
@@ -396,10 +399,13 @@ int main() {
 
         JsonObject jsonObj = json.as<JsonObject>();
 
+        // Mirrors API.cpp: the hardware thread applies the rotation
         if (jsonObj["mode"].is<int>()) {
-            currentMode = (KubiMode)jsonObj["mode"].as<int>();
-            display.setRotationForFace((int)currentMode);
-            display.requestWake();
+            int mode = jsonObj["mode"].as<int>();
+            if (mode >= MODE_CLOCK_IDLE && mode <= MODE_SCHEDULE_AGENDA) {
+                currentMode = (KubiMode)mode;
+                display.requestWake();
+            }
         }
 
         if (jsonObj["icalUrl"].is<const char*>()) {
@@ -594,8 +600,7 @@ int main() {
                 else if (face == 2) { sim_accel_x = 0.0f; sim_accel_y = 9.8f; sim_accel_z = 0.0f; }
                 else if (face == 3) { sim_accel_x = -9.8f; sim_accel_y = 0.0f; sim_accel_z = 0.0f; }
 
-                currentMode = (KubiMode)face;
-                display.setRotationForFace(face);
+                currentMode = (KubiMode)face; // rotation applied by the hardware thread
                 clockShowDetails = false;
                 sim_injected_gesture = GESTURE_NONE;
                 sensors.getRecentGesture();
