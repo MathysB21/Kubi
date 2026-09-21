@@ -389,6 +389,11 @@ void core1HardwareTask(void * parameter) {
     bool mazeActive = mazeFaceActive(currentMode);
     if (mazeActive && !mazeWasActive) maze.begin();
     mazeWasActive = mazeActive;
+    if (mazeActive) {
+      float ax, ay, az;
+      sensors.getAcceleration(ax, ay, az);
+      maze.update(ax, ay, az, now);
+    }
 
     // 5. Gesture Handling (Streamlined: Tap = Dismiss/Pause/Play, Shake = Skip)
     KubiGesture gesture = sensors.getRecentGesture();

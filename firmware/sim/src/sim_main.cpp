@@ -176,6 +176,11 @@ void hardwareSimulationThread() {
         bool mazeActive = mazeFaceActive(currentMode);
         if (mazeActive && !mazeWasActive) maze.begin();
         mazeWasActive = mazeActive;
+        if (mazeActive) {
+            float ax, ay, az;
+            sensors.getAcceleration(ax, ay, az);
+            maze.update(ax, ay, az, now);
+        }
 
         // 5. Gesture Handling
         KubiGesture gesture = sensors.getRecentGesture();
