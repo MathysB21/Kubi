@@ -25,11 +25,12 @@ powershell -ExecutionPolicy Bypass -File firmware/sim/run_sim.ps1
 * **Workbench UI**: `http://localhost:5173/sim`
 * **C++ Firmware Runner HTTP API**: `http://127.0.0.1:8080`
   - `GET /sim/frame`: Streams raw 240×320 RGBA pixel buffer from the C++ framebuffer.
-  - `POST /sim/inject`: Injects virtual face changes (`{"face": 1}`), gestures (`{"gesture": "tap"|"shake"|"slam"}`), temp, battery, accel.
-  - `GET /sim/state`: Telemetry heartbeat (orientation, backlight PWM, chime events, active face).
-  - `GET /api/state`: Standard Kubi firmware REST state.
-  - `POST /api/settings`: Updates Pomodoro intervals, colors, etc.
+  - `POST /sim/inject`: Injects virtual face changes (`{"face": 1}`), gestures (`{"gesture": "tap"|"shake"|"slam"}`), continuous tilt (`{"tiltRoll": deg, "tiltPitch": deg}`, relative to the current face resting flat), the first-connect screen (`{"showAddress": true}`), temp, battery, accel.
+  - `GET /sim/state`: Telemetry heartbeat (orientation, backlight PWM, chime events, active face, tilt, `audioSamples`/`audioUnderruns`, `pixelWrites`, and `maze` when Face 4 is the maze).
+  - `GET /api/state`: Standard Kubi firmware REST state (incl. `sleepTimeoutMin`, `isSleeping`, `face4Maze`).
+  - `POST /api/settings`: Updates Pomodoro intervals/colours, clock style, `sleepTimeoutMin`, `face4Maze`, face.
   - `POST /api/override`: Triggers the companion "Secret Override" broadcast message.
+  - `POST /api/factory-reset`: `{"confirm":"ERASE"}` wipes settings + WiFi and restarts into setup (the sim replays onboarding instead of rebooting).
 
 ### How to Rebuild the Simulator
 ```powershell
@@ -64,6 +65,7 @@ Kubi uses **Software-in-the-Loop** simulation:
   - `firmware/src/SensorManager.cpp`
   - `firmware/src/AudioManager.cpp`
   - `firmware/src/KubiSprites.cpp`
+  - `firmware/src/AmbientFace.cpp`, `firmware/src/MazeGame.cpp`, `firmware/src/MazeBoards.cpp`, `firmware/src/FaceMap.h`
 * **Desktop HAL (`firmware/sim/include/`)**:
   - Replaces ESP32-specific peripherals (SPI, I2C, FreeRTOS tasks) with desktop equivalents without altering production firmware code.
   - `TFT_eSPI_Mock.cpp` rasterizes graphics, 5×7 standard ASCII fonts, and 7-segment timer digits into a memory buffer.
@@ -115,10 +117,26 @@ Kubi uses **Software-in-the-Loop** simulation:
     - `CHIME_POMODORO_LONG_BREAK`: Unique extended 7-note triumphant fanfare (C5 -> E5 -> G5 -> C6 -> D6 -> E6 -> G6) played when all cycles finish and transitioning into the Long Break.
 * **Face 3: Mascot & Room Temp**:
   - Animated bouncing Kubi jelly character and live room temperature readings from BMP280.
+  - The only face (with the maze) that sleeps: after `sleepTimeoutMin` of stillness (default 5, NVS `sleepMin`, dashboard "Screen Sleep") the backlight fades out; any tap or movement wakes it silently.
 * **Face 4: Ambient Glow** (`AmbientFace.cpp`, ships by default; the tilt maze may replace it):
   - Dithered pixel-art orb (8 px cells, 4x4 Bayer fringe) that breathes (9 s) and eases through a night palette (40 s per colour).
   - Backlight fades down to `AmbientFace::BACKLIGHT` on this face. Exempt from screen sleep. Tap moves on to the next colour, silently.
   - Redraws at 10 Hz and pushes only cells whose colour changed (~8k px/s).
+* **Face 4 alternative: Tilt Maze** (`MazeGame.cpp`, `MazeBoards.cpp`; on when NVS `face4Maze` is set, dashboard "Face 4 shows: Maze (beta)"; go/no-go 2 Nov):
+  - Ten 20x14 ASCII boards (`#` wall, `S`, `G`, `O` hole). Steering is tilt relative to the resting vector captured at board start, in FaceMap's screen frame. Fixed 200 Hz physics in cell units, circle-vs-cell collisions, no tunnelling at the speed cap.
+  - While playing, faces need a 2 s hold to switch (roll over and hold to leave); the lock releases after 45 s without input.
+  - Holes send the ball back to S (clock keeps running), the goal shows time + best (NVS `mzb<n>`), then the next board. Renders at 30 fps, ball only.
+
+---
+
+## 5b. Architecture Notes (read before changing these areas)
+
+* **Audio** runs in its own FreeRTOS task (`audioTask` in `main.cpp`, a thread in the sim) that blocks on the I2S DMA queue. `playChime()` is safe from any task. The sim's `AudioOutputI2S` mock is deliberately strict: no samples before `begin()`, a DMA-sized queue drained at the sample rate, underruns counted.
+* **Rendering** is scene-based (`DisplayManager::beginScene`). Only a scene change, rotation or `invalidate()` clears the screen; faces repaint just what changed. Never add `fillScreen` to a steady-state draw path. The TFT mock implements TFT_eSPI's opaque text background and `setTextPadding`, so overdraw bugs show in the sim.
+* **Screen sleep** policy lives in `DisplayManager` (`noteActivity`, `setSleepAllowed`, `requestWake` for other tasks); which faces sleep is `modeMaySleep()` in `API.h`.
+* **Orientation** has one source of truth: `FACE_POSES` and `SCREEN_OUT_*` in `FaceMap.h` (marked FILL IN FROM BRING-UP). Sensors, rotation, the sim's face buttons and tilt injection, and maze steering all read it.
+* **Cross-task data**: never share an Arduino `String` between the web server task and the hardware loop; see `setOverrideText()/getOverrideText()`. Web handlers must not touch the TFT: they set state and the hardware loop applies it (e.g. rotation follows `currentMode`).
+* **The orchestration is still duplicated**: every behaviour change in `main.cpp` `core1HardwareTask` / `API.cpp` must be mirrored in `sim_main.cpp`.
 
 ---
 
