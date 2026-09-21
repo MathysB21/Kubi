@@ -648,6 +648,7 @@ int main() {
         doc["isSleeping"] = display.isSleeping();
         doc["mode"] = (int)currentMode;
         doc["isAnalog"] = clockAnalogView;
+        doc["pixelWrites"] = sim_pixel_writes;
         doc["audioReady"] = audio.isReady();
         if (const AudioOutputI2S* out = audio.getOutput()) {
             doc["audioSamples"] = out->getSamplesWritten();

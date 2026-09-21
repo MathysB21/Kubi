@@ -43,6 +43,9 @@ public:
     void setRotation(uint8_t rotation);
     void setRotationForFace(int face);
 
+    // Forces the next draw call to repaint its whole face from a cleared screen.
+    void invalidate() { _fullRedraw = true; }
+
 private:
     TFT_eSPI _tft;
     uint8_t _currentBacklight;
@@ -55,6 +58,37 @@ private:
     uint8_t _currentRotation;
 
     void drawMascot(int centerX, int centerY, int state);
+
+    // --- Partial redraw bookkeeping ---
+    // Steady-state frames only repaint what changed. A full clear happens on a
+    // scene change, a rotation change or invalidate(): a 240x320 fillScreen
+    // costs ~31 ms of SPI at 40 MHz, 61% of a 50 ms frame.
+    enum Scene : uint8_t {
+        SCENE_NONE = 0,
+        SCENE_BOOT,
+        SCENE_CLOCK_DIGITAL,
+        SCENE_CLOCK_ANALOG,
+        SCENE_POMODORO,
+        SCENE_MASCOT,
+        SCENE_SCHEDULE,
+        SCENE_OVERRIDE
+    };
+    Scene _scene;
+    bool _fullRedraw;
+    // Returns true if the face must be painted from scratch. Clears the screen
+    // first unless clear is false (overlays such as the override banner).
+    bool beginScene(Scene scene, bool clear = true);
+
+    // Last-drawn values; only meaningful while _scene is unchanged
+    int _drawnHour, _drawnMinute, _drawnMday;
+    int _drawnRemaining, _drawnBarWidth, _drawnCycle;
+    uint8_t _drawnStatus;
+    char _drawnPhase[24];
+    uint16_t _drawnColor;
+    int _drawnRoutine;
+    char _drawnTemp[16];
+    uint32_t _drawnScheduleSig;
+    uint32_t _drawnOverrideSig;
 };
 
 extern DisplayManager display;

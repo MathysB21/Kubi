@@ -18,6 +18,15 @@ DisplayManager::DisplayManager()
       _sleepAllowed(false),
       _sleepTimeoutMin(5),
       _lastActivityTime(0),
+      _scene(SCENE_NONE),
+      _fullRedraw(true),
+      _drawnHour(-1), _drawnMinute(-1), _drawnMday(-1),
+      _drawnRemaining(-1), _drawnBarWidth(0), _drawnCycle(-1),
+      _drawnStatus(0xFF),
+      _drawnColor(0),
+      _drawnRoutine(-1),
+      _drawnScheduleSig(0),
+      _drawnOverrideSig(0),
       _currentRotation(0) {}
 
 void DisplayManager::init() {
@@ -106,6 +115,7 @@ void DisplayManager::setRotation(uint8_t rotation) {
         _currentRotation = rotation;
         _tft.setRotation(rotation);
         _tft.fillScreen(TFT_BLACK); // Clean screen buffer on rotation
+        _fullRedraw = true;
     }
 }
 
@@ -121,14 +131,44 @@ void DisplayManager::setRotationForFace(int face) {
     }
 }
 
+// FNV-1a, for cheap "did this content change" checks
+static uint32_t fnv1a(uint32_t h, const char* str) {
+    if (h == 0) h = 2166136261u;
+    while (*str) { h ^= (uint8_t)*str++; h *= 16777619u; }
+    return h ^ 0xFF; // separator so "ab"+"c" != "a"+"bc"
+}
+
+static const char* const DAY_NAMES[]   = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+static const char* const MONTH_NAMES[] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+
+static bool formatDate(char* buf, size_t len, int wday, int mday, int month) {
+    if (wday >= 0 && wday < 7 && month >= 0 && month < 12 && mday >= 1 && mday <= 31) {
+        snprintf(buf, len, "%s, %d %s", DAY_NAMES[wday], mday, MONTH_NAMES[month]);
+        return true;
+    }
+    buf[0] = '\0';
+    return false;
+}
+
+bool DisplayManager::beginScene(Scene scene, bool clear) {
+    if (scene == _scene && !_fullRedraw) return false;
+    _scene = scene;
+    _fullRedraw = false;
+    if (clear) _tft.fillScreen(TFT_BLACK);
+    return true;
+}
+
 void DisplayManager::drawBootScreen(const String& status) {
     int w = _tft.width();
     int h = _tft.height();
     int cx = w / 2;
     int cy = h / 2;
 
+    // Boot is not steady state: repaint it whole, then force the first face to.
+    _scene = SCENE_BOOT;
+    _fullRedraw = true;
     _tft.fillScreen(TFT_BLACK);
-    
+
     // Logo
     _tft.setTextDatum(MC_DATUM);
     _tft.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -148,55 +188,66 @@ void DisplayManager::drawClockFace(int hour, int minute, int wday, int mday, int
         return;
     }
 
+    bool full = beginScene(SCENE_CLOCK_DIGITAL);
+    // The clock only changes once a minute: skip the frame entirely otherwise
+    if (!full && hour == _drawnHour && minute == _drawnMinute && mday == _drawnMday) return;
+
     int w = _tft.width();
     int h = _tft.height();
     int cx = w / 2;
     int cy = h / 2;
-
-    _tft.fillScreen(TFT_BLACK);
 
     char timeBuf[16];
     snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", hour, minute);
 
-    char dateBuf[32] = "";
-    if (wday >= 0 && wday < 7 && month >= 0 && month < 12 && mday >= 1 && mday <= 31) {
-        static const char* const DAY_NAMES[] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
-        static const char* const MONTH_NAMES[] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
-        snprintf(dateBuf, sizeof(dateBuf), "%s, %d %s", DAY_NAMES[wday], mday, MONTH_NAMES[month]);
-    }
+    char dateBuf[32];
+    bool hasDate = formatDate(dateBuf, sizeof(dateBuf), wday, mday, month);
 
-    // Pure Minimalist Mode
+    // Pure Minimalist Mode. Opaque text + full-width padding overwrites the
+    // previous minute in place, no clear needed.
     _tft.setTextDatum(MC_DATUM);
     _tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    _tft.setTextPadding(w);
     _tft.drawString(timeBuf, cx, cy, 7); // Large 7-segment digital font
 
-    if (dateBuf[0] != '\0') {
+    if (hasDate && (full || mday != _drawnMday)) {
         _tft.drawString(dateBuf, cx, cy + 40, 2);
     }
+    _tft.setTextPadding(0);
+
+    _drawnHour = hour;
+    _drawnMinute = minute;
+    _drawnMday = mday;
 }
 
 void DisplayManager::drawAnalogClockFace(int hour, int minute, int wday, int mday, int month) {
+    bool full = beginScene(SCENE_CLOCK_ANALOG);
+    if (!full && hour == _drawnHour && minute == _drawnMinute && mday == _drawnMday) return;
+
     int w = _tft.width();
     int h = _tft.height();
     int cx = w / 2;
     int cy = h / 2;
 
-    _tft.fillScreen(TFT_BLACK);
-
-    // 12 Numbers arranged in clock circle
-    int radiusNumbers = 82;
     _tft.setTextDatum(MC_DATUM);
     _tft.setTextColor(TFT_WHITE, TFT_BLACK);
 
-    for (int num = 1; num <= 12; num++) {
-        float angleDeg = num * 30.0f - 90.0f;
-        float angleRad = angleDeg * 0.0174532925f;
-        int nx = cx + (int)round(radiusNumbers * cos(angleRad));
-        int ny = cy + (int)round(radiusNumbers * sin(angleRad));
+    if (full) {
+        // 12 Numbers arranged in clock circle (static, drawn once)
+        int radiusNumbers = 82;
+        for (int num = 1; num <= 12; num++) {
+            float angleDeg = num * 30.0f - 90.0f;
+            float angleRad = angleDeg * 0.0174532925f;
+            int nx = cx + (int)round(radiusNumbers * cos(angleRad));
+            int ny = cy + (int)round(radiusNumbers * sin(angleRad));
 
-        char numStr[4];
-        snprintf(numStr, sizeof(numStr), "%d", num);
-        _tft.drawString(numStr, nx, ny, 2);
+            char numStr[4];
+            snprintf(numStr, sizeof(numStr), "%d", num);
+            _tft.drawString(numStr, nx, ny, 2);
+        }
+    } else {
+        // Erase the old hands only. Radius 70 stays inside the numerals (82 - ~8).
+        _tft.fillCircle(cx, cy, 70, TFT_BLACK);
     }
 
     // Arm angles
@@ -241,15 +292,18 @@ void DisplayManager::drawAnalogClockFace(int hour, int minute, int wday, int mda
     _tft.fillCircle(cx, cy, 1, TFT_WHITE);
 
     // Current date at bottom
-    if (wday >= 0 && wday < 7 && month >= 0 && month < 12 && mday >= 1 && mday <= 31) {
-        static const char* const DAY_NAMES[] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
-        static const char* const MONTH_NAMES[] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
-        char dateBuf[32];
-        snprintf(dateBuf, sizeof(dateBuf), "%s, %d %s", DAY_NAMES[wday], mday, MONTH_NAMES[month]);
+    char dateBuf[32];
+    if ((full || mday != _drawnMday) && formatDate(dateBuf, sizeof(dateBuf), wday, mday, month)) {
         _tft.setTextDatum(MC_DATUM);
         _tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+        _tft.setTextPadding(w);
         _tft.drawString(dateBuf, cx, cy + 124, 2);
+        _tft.setTextPadding(0);
     }
+
+    _drawnHour = hour;
+    _drawnMinute = minute;
+    _drawnMday = mday;
 }
 
 void DisplayManager::drawPomodoroFace(int remainingSeconds, int totalSeconds, const char* phaseName, bool isPaused, bool isStarted, uint16_t textColor, int currentCycle, int cycleTarget) {
@@ -258,52 +312,79 @@ void DisplayManager::drawPomodoroFace(int remainingSeconds, int totalSeconds, co
     int cx = w / 2;
     int cy = h / 2;
 
-    _tft.fillScreen(TFT_BLACK);
-
-    int mins = remainingSeconds / 60;
-    int secs = remainingSeconds % 60;
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%02d:%02d", mins, secs);
+    // A colour change recolours everything: treat it as a new scene
+    if (_scene == SCENE_POMODORO && textColor != _drawnColor) invalidate();
+    bool full = beginScene(SCENE_POMODORO);
 
     _tft.setTextDatum(MC_DATUM);
+    _tft.setTextPadding(w); // every text row below overwrites its own band
 
     // Phase Banner (top)
-    _tft.setTextColor(textColor, TFT_BLACK);
-    _tft.drawString(phaseName, cx, 28, 4);
+    if (full || strncmp(phaseName, _drawnPhase, sizeof(_drawnPhase)) != 0) {
+        _tft.setTextColor(textColor, TFT_BLACK);
+        _tft.drawString(phaseName, cx, 28, 4);
+        strncpy(_drawnPhase, phaseName, sizeof(_drawnPhase) - 1);
+        _drawnPhase[sizeof(_drawnPhase) - 1] = '\0';
+    }
 
     // Cycle Pips / Indicator (e.g. Cycle 2 of 4)
-    if (cycleTarget > 0) {
+    if (cycleTarget > 0 && (full || currentCycle != _drawnCycle)) {
         char cycleBuf[32];
         snprintf(cycleBuf, sizeof(cycleBuf), "Session %d of %d", currentCycle + 1, cycleTarget);
         _tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
         _tft.drawString(cycleBuf, cx, 52, 2);
+        _drawnCycle = currentCycle;
     }
 
-    // Huge Time Display in customized textColor!
-    _tft.setTextColor(textColor, TFT_BLACK);
-    _tft.drawString(buf, cx, cy + 5, 7);
+    // Huge Time Display in customized textColor! Changes once a second.
+    if (full || remainingSeconds != _drawnRemaining) {
+        int mins = remainingSeconds / 60;
+        int secs = remainingSeconds % 60;
+        char buf[16];
+        snprintf(buf, sizeof(buf), "%02d:%02d", mins, secs);
+        _tft.setTextColor(textColor, TFT_BLACK);
+        _tft.drawString(buf, cx, cy + 5, 7);
+        _drawnRemaining = remainingSeconds;
+    }
 
-    // Status Line
+    // Status Line: 0 = none, 1 = START shown, 2 = START blinked off, 3 = PAUSED
+    uint8_t status = 0;
     if (!isStarted) {
         // Slow arcade-style flashing "START" (~1.2s cycle: 600ms on, 600ms off)
-        if ((millis() % 1200) < 600) {
-            _tft.setTextColor(TFT_WHITE, TFT_BLACK);
-            _tft.drawString("START", cx, h - 38, 2);
-        }
+        status = ((millis() % 1200) < 600) ? 1 : 2;
     } else if (isPaused) {
-        _tft.setTextColor(TFT_WHITE, TFT_BLACK);
-        _tft.drawString("PAUSED", cx, h - 38, 2);
+        status = 3;
     }
+    if (full || status != _drawnStatus) {
+        if (status == 1 || status == 3) {
+            _tft.setTextColor(TFT_WHITE, TFT_BLACK);
+            _tft.drawString(status == 1 ? "START" : "PAUSED", cx, h - 38, 2);
+        } else {
+            _tft.fillRect(0, h - 38 - 9, w, 18, TFT_BLACK);
+        }
+        _drawnStatus = status;
+    }
+    _tft.setTextPadding(0);
 
-    // Progress bar at bottom
+    // Progress bar at bottom: only the changed span of the fill is touched
     if (totalSeconds > 0) {
         int barMaxWidth = w - 40;
         int barWidth = (int)((1.0f - (float)remainingSeconds / (float)totalSeconds) * (float)barMaxWidth);
         if (barWidth > barMaxWidth) barWidth = barMaxWidth;
         if (barWidth < 0) barWidth = 0;
-        _tft.drawRect(18, h - 18, barMaxWidth + 4, 8, TFT_DARKGREY);
-        _tft.fillRect(20, h - 16, barWidth, 4, textColor);
+        if (full) {
+            _tft.drawRect(18, h - 18, barMaxWidth + 4, 8, TFT_DARKGREY);
+            _drawnBarWidth = 0;
+        }
+        if (barWidth > _drawnBarWidth) {
+            _tft.fillRect(20 + _drawnBarWidth, h - 16, barWidth - _drawnBarWidth, 4, textColor);
+        } else if (barWidth < _drawnBarWidth) {
+            _tft.fillRect(20 + barWidth, h - 16, _drawnBarWidth - barWidth, 4, TFT_BLACK);
+        }
+        _drawnBarWidth = barWidth;
     }
+
+    _drawnColor = textColor;
 }
 
 void DisplayManager::drawMascot(int centerX, int centerY, int routineState) {
@@ -319,10 +400,11 @@ void DisplayManager::drawMascot(int centerX, int centerY, int routineState) {
 
     // Eyes
     if (routineState == 0) {
-        // Sleepy (Zzz)
+        // Sleepy (Zzz). Transparent text (fg == bg) so the z's don't punch
+        // black boxes into the body corner they overlap.
         _tft.drawFastHLine(centerX - 25, centerY - 5, 16, TFT_WHITE);
         _tft.drawFastHLine(centerX + 10, centerY - 5, 16, TFT_WHITE);
-        _tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+        _tft.setTextColor(TFT_YELLOW, TFT_YELLOW);
         _tft.drawString("z", centerX + 45, centerY - 45, 2);
         _tft.drawString("Z", centerX + 55, centerY - 60, 4);
     } else if (routineState == 1) {
@@ -353,8 +435,6 @@ void DisplayManager::drawMascotFace(float temperature, int hourOfDay) {
     int cx = w / 2;
     int cy = h / 2;
 
-    _tft.fillScreen(TFT_BLACK);
-
     // Determine routine
     int routine = 2; // Default focus
     if (hourOfDay >= 23 || hourOfDay < 6) {
@@ -363,19 +443,30 @@ void DisplayManager::drawMascotFace(float temperature, int hourOfDay) {
         routine = 1; // Coffee morning
     }
 
-    // Draw Mascot
-    drawMascot(cx, cy - 25, routine);
+    // The mascot is static between routine changes: repaint it only then
+    if (_scene == SCENE_MASCOT && routine != _drawnRoutine) invalidate();
+    bool full = beginScene(SCENE_MASCOT);
+
+    if (full) {
+        drawMascot(cx, cy - 25, routine);
+        _tft.setTextDatum(MC_DATUM);
+        _tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+        _tft.drawString("Room Temperature", cx, h - 20, 2);
+        _drawnRoutine = routine;
+    }
 
     // Temperature Badge
     char tempBuf[16];
     snprintf(tempBuf, sizeof(tempBuf), "%.1f °C", temperature);
-
-    _tft.setTextDatum(MC_DATUM);
-    _tft.setTextColor(TFT_GOLD, TFT_BLACK);
-    _tft.drawString(tempBuf, cx, h - 45, 4);
-
-    _tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-    _tft.drawString("Room Temperature", cx, h - 20, 2);
+    if (full || strcmp(tempBuf, _drawnTemp) != 0) {
+        _tft.setTextDatum(MC_DATUM);
+        _tft.setTextColor(TFT_GOLD, TFT_BLACK);
+        _tft.setTextPadding(w);
+        _tft.drawString(tempBuf, cx, h - 45, 4);
+        _tft.setTextPadding(0);
+        strncpy(_drawnTemp, tempBuf, sizeof(_drawnTemp) - 1);
+        _drawnTemp[sizeof(_drawnTemp) - 1] = '\0';
+    }
 }
 
 void DisplayManager::drawScheduleFace(const String& dayTitle, const std::vector<ScheduleItem>& items, bool hasIcs, bool hasEvents) {
@@ -383,29 +474,46 @@ void DisplayManager::drawScheduleFace(const String& dayTitle, const std::vector<
     int h = _tft.height();
     int cx = w / 2;
 
-    _tft.fillScreen(TFT_BLACK);
+    // Repaint everything only when the content changes; otherwise just the
+    // scrolling ticker rows move.
+    uint32_t sig = fnv1a(0, dayTitle.c_str());
+    sig = fnv1a(sig, hasIcs ? "I" : "i");
+    sig = fnv1a(sig, hasEvents ? "E" : "e");
+    for (size_t row = 0; row < items.size() && row < 4; row++) {
+        sig = fnv1a(sig, items[row].time.c_str());
+        sig = fnv1a(sig, items[row].name.c_str());
+    }
+    if (_scene == SCENE_SCHEDULE && sig != _drawnScheduleSig) invalidate();
+    bool full = beginScene(SCENE_SCHEDULE);
+    _drawnScheduleSig = sig;
 
-    // 1. Pink Schedule Header Text
-    _tft.setTextDatum(TC_DATUM);
-    _tft.setTextColor(TFT_PINK, TFT_BLACK);
-    _tft.drawString(dayTitle.length() > 0 ? dayTitle : "Schedule (today)", cx, 10, 2);
-    _tft.drawFastHLine(20, 28, w - 40, TFT_DARKGREY);
+    if (full) {
+        // 1. Pink Schedule Header Text
+        _tft.setTextDatum(TC_DATUM);
+        _tft.setTextColor(TFT_PINK, TFT_BLACK);
+        _tft.drawString(dayTitle.length() > 0 ? dayTitle : "Schedule (today)", cx, 10, 2);
+        _tft.drawFastHLine(20, 28, w - 40, TFT_DARKGREY);
+    }
 
     // 2. Empty State 1: No calendar connected
     if (!hasIcs) {
-        _tft.setTextDatum(MC_DATUM);
-        _tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-        _tft.drawString("No calendar connected,", cx, h / 2 - 12, 2);
-        _tft.drawString("that's sad", cx, h / 2 + 12, 2);
+        if (full) {
+            _tft.setTextDatum(MC_DATUM);
+            _tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+            _tft.drawString("No calendar connected,", cx, h / 2 - 12, 2);
+            _tft.drawString("that's sad", cx, h / 2 + 12, 2);
+        }
         return;
     }
 
     // 3. Empty State 2: ICS exists but no events / empty
     if (!hasEvents || items.empty()) {
-        _tft.setTextDatum(MC_DATUM);
-        _tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-        _tft.drawString("Nothing happening,", cx, h / 2 - 12, 2);
-        _tft.drawString("I guess", cx, h / 2 + 12, 2);
+        if (full) {
+            _tft.setTextDatum(MC_DATUM);
+            _tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+            _tft.drawString("Nothing happening,", cx, h / 2 - 12, 2);
+            _tft.drawString("I guess", cx, h / 2 + 12, 2);
+        }
         return;
     }
 
@@ -418,9 +526,6 @@ void DisplayManager::drawScheduleFace(const String& dayTitle, const std::vector<
     for (size_t row = 0; row < items.size() && row < 4; row++) {
         int y = startY + (int)row * (cardH + gap);
 
-        // Dark card background
-        _tft.fillRoundRect(15, y, cardW, cardH, 8, 0x18E3);
-
         String timePrefix = items[row].time.length() > 0 ? (items[row].time + " - ") : "";
         int prefixW = _tft.textWidth(timePrefix, 2);
         int nameStartX = 25 + prefixW;
@@ -431,8 +536,17 @@ void DisplayManager::drawScheduleFace(const String& dayTitle, const std::vector<
         String name = items[row].name;
         int nameW = _tft.textWidth(name, 2);
         int textY = y + 11;
+        bool isTicker = nameW > availW;
 
-        if (nameW <= availW) {
+        // Static rows never change between full repaints
+        if (!full && !isTicker) continue;
+
+        // Dark card background (ticker rows overdraw their text opaquely instead)
+        if (full) {
+            _tft.fillRoundRect(15, y, cardW, cardH, 8, 0x18E3);
+        }
+
+        if (!isTicker) {
             // Fits within card: static rendering
             _tft.setTextDatum(TL_DATUM);
             _tft.setTextColor(TFT_WHITE, 0x18E3);
@@ -471,9 +585,11 @@ void DisplayManager::drawScheduleFace(const String& dayTitle, const std::vector<
         }
     }
 
-    _tft.setTextDatum(BC_DATUM);
-    _tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-    _tft.drawString("Tap to cycle / Shake for today", cx, h - 4, 1);
+    if (full) {
+        _tft.setTextDatum(BC_DATUM);
+        _tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+        _tft.drawString("Tap to cycle / Shake for today", cx, h - 4, 1);
+    }
 }
 
 void DisplayManager::drawScheduleFace(const std::vector<String>& events, int page) {
@@ -494,10 +610,16 @@ void DisplayManager::drawScheduleFace(const std::vector<String>& events, int pag
 }
 
 void DisplayManager::drawOverrideAlert(const String& message) {
+    // Overlay on top of the current face (no clear); repaint only when the
+    // message changes. Dismissing it changes scene, which repaints the face.
+    uint32_t sig = fnv1a(0, message.c_str());
+    if (_scene == SCENE_OVERRIDE && sig != _drawnOverrideSig) invalidate();
+    if (!beginScene(SCENE_OVERRIDE, false)) return;
+    _drawnOverrideSig = sig;
+
     int w = _tft.width();
-    int h = _tft.height();
     int cx = w / 2;
-    int cy = h / 2;
+    int cy = _tft.height() / 2;
 
     // High-priority alert banner
     _tft.fillRoundRect(10, cy - 70, w - 20, 140, 12, TFT_MAROON);
