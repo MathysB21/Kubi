@@ -3,6 +3,8 @@
 #include <TFT_eSPI.h>
 #include <vector>
 
+struct KubiScene;
+
 // Kubi Display Manager for 2.0" 240x320 IPS (ST7789 via SPI)
 class DisplayManager {
 public:
@@ -30,6 +32,10 @@ public:
     void drawAnalogClockFace(int hour, int minute, int wday = -1, int mday = 1, int month = 0);
     void drawPomodoroFace(int remainingSeconds, int totalSeconds, const char* phaseName, bool isPaused, bool isStarted, uint16_t textColor, int currentCycle = 0, int cycleTarget = 4);
     void drawMascotFace(float temperature, int hourOfDay);
+    // Full-screen diorama scene with a temperature badge; falls back to the
+    // vector mascot when no scenes are compiled in.
+    void drawMascotFace(float temperature, int hourOfDay, int sceneIndex, bool showHud = true);
+    void drawScene(int sceneIndex);
     void drawOverrideAlert(const String& message);
     void drawAmbientFace();
     void drawMazeFace();
@@ -70,6 +76,7 @@ private:
         SCENE_CLOCK_ANALOG,
         SCENE_POMODORO,
         SCENE_MASCOT,
+        SCENE_MASCOT_DIORAMA,
         SCENE_OVERRIDE,
         SCENE_AMBIENT,
         SCENE_MAZE,
@@ -88,6 +95,7 @@ private:
     char _drawnPhase[24];
     uint16_t _drawnColor;
     int _drawnRoutine;
+    const KubiScene* _drawnDiorama;
     char _drawnTemp[16];
     uint32_t _drawnOverrideSig;
     uint32_t _drawnAddressSig;

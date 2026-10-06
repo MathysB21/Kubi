@@ -2,6 +2,7 @@
 #include "AmbientFace.h"
 #include "MazeGame.h"
 #include "FaceMap.h"
+#include "KubiScenes.h"
 #include <cmath>
 
 #define BACKLIGHT_PIN 32
@@ -28,6 +29,7 @@ DisplayManager::DisplayManager()
       _drawnStatus(0xFF),
       _drawnColor(0),
       _drawnRoutine(-1),
+      _drawnDiorama(nullptr),
       _drawnOverrideSig(0),
       _drawnAddressSig(0),
       _currentRotation(0) {}
@@ -471,6 +473,81 @@ void DisplayManager::drawMascotFace(float temperature, int hourOfDay) {
         _tft.setTextPadding(w);
         _tft.drawString(tempBuf, cx, h - 45, 4);
         _tft.setTextPadding(0);
+        strncpy(_drawnTemp, tempBuf, sizeof(_drawnTemp) - 1);
+        _drawnTemp[sizeof(_drawnTemp) - 1] = '\0';
+    }
+}
+
+static const KubiScene* sceneAt(int sceneIndex) {
+    if (ALL_KUBI_SCENE_COUNT == 0) return nullptr;
+    int idx = sceneIndex % (int)ALL_KUBI_SCENE_COUNT;
+    if (idx < 0) idx += (int)ALL_KUBI_SCENE_COUNT;
+    const KubiScene* sc = ALL_KUBI_SCENES[idx];
+    return (sc && sc->palette && sc->rleData) ? sc : nullptr;
+}
+
+// Expensive (a whole screen of SPI): only call on a full repaint.
+void DisplayManager::drawScene(int sceneIndex) {
+    const KubiScene* sc = sceneAt(sceneIndex);
+    if (!sc) return;
+
+    uint8_t scale = sc->scale > 0 ? sc->scale : 1;
+    int totalPixels = sc->width * sc->height;
+    int curPixel = 0;
+
+    // Each run becomes one fillRect per source row it covers, instead of
+    // scale*scale drawPixel calls per pixel (each its own SPI transaction).
+    for (uint32_t i = 0; i + 1 < sc->rleLength && curPixel < totalPixels; i += 2) {
+        int count = pgm_read_byte(&sc->rleData[i]);
+        uint8_t colorIdx = pgm_read_byte(&sc->rleData[i + 1]);
+        if (colorIdx >= sc->paletteSize) colorIdx = 0;
+        uint16_t color = pgm_read_word(&sc->palette[colorIdx]);
+
+        while (count > 0 && curPixel < totalPixels) {
+            int px = curPixel % sc->width;
+            int py = curPixel / sc->width;
+            int span = sc->width - px;
+            if (span > count) span = count;
+            _tft.fillRect(px * scale, py * scale, span * scale, scale, color);
+            curPixel += span;
+            count -= span;
+        }
+    }
+}
+
+void DisplayManager::drawMascotFace(float temperature, int hourOfDay, int sceneIndex, bool showHud) {
+    const KubiScene* sc = sceneIndex >= 0 ? sceneAt(sceneIndex) : nullptr;
+    if (!sc) {
+        // No scenes compiled in: the vector mascot
+        drawMascotFace(temperature, hourOfDay);
+        return;
+    }
+
+    int w = _tft.width();
+    int h = _tft.height();
+    int cx = w / 2;
+
+    // The scene is static: repaint it only when another one is picked. It
+    // covers the screen in the normal portrait pose, so skip the clear then.
+    if (_scene == SCENE_MASCOT_DIORAMA && sc != _drawnDiorama) invalidate();
+    uint8_t scale = sc->scale > 0 ? sc->scale : 1;
+    bool covers = sc->width * scale >= w && sc->height * scale >= h;
+    bool full = beginScene(SCENE_MASCOT_DIORAMA, !covers);
+
+    if (full) {
+        drawScene(sceneIndex);
+        _drawnDiorama = sc;
+    }
+
+    // Bottom temperature badge pill, repainted whole when the reading changes
+    char tempBuf[16];
+    snprintf(tempBuf, sizeof(tempBuf), "%.1f °C", temperature);
+    if (showHud && (full || strcmp(tempBuf, _drawnTemp) != 0)) {
+        _tft.fillRoundRect(cx - 50, h - 36, 100, 28, 8, 0x18C3);
+        _tft.drawRoundRect(cx - 50, h - 36, 100, 28, 8, TFT_GOLD);
+        _tft.setTextDatum(MC_DATUM);
+        _tft.setTextColor(TFT_GOLD, 0x18C3);
+        _tft.drawString(tempBuf, cx, h - 22, 2);
         strncpy(_drawnTemp, tempBuf, sizeof(_drawnTemp) - 1);
         _drawnTemp[sizeof(_drawnTemp) - 1] = '\0';
     }

@@ -16,6 +16,7 @@
 #include "PomodoroManager.h"
 #include "AmbientFace.h"
 #include "MazeGame.h"
+#include "KubiScenes.h"
 
 // =============================================================================
 // KUBI: DESK COMPANION CUBE (ESP32 DUAL-CORE ARCHITECTURE)
@@ -60,6 +61,18 @@ volatile float diagAccelZ = 1.0f;
 
 // --- CLOCK SETTINGS ---
 bool clockAnalogView = false;
+
+// --- FACE 3 ---
+int mascotSceneIndex = 0; // Diorama on the Mascot face, 0..ALL_KUBI_SCENE_COUNT-1
+
+// Tap steps forward through the dioramas, shake steps back.
+static void stepMascotScene(int delta) {
+  int n = (int)ALL_KUBI_SCENE_COUNT;
+  if (n == 0) return;
+  mascotSceneIndex = ((mascotSceneIndex + delta) % n + n) % n;
+  audio.playChime(CHIME_TAP_FEEDBACK);
+  Serial.printf("[MASCOT] Scene %d\n", mascotSceneIndex);
+}
 
 // --- FACE 4 ---
 bool face4Maze = false; // false = Ambient (shipping default)
@@ -425,6 +438,8 @@ void core1HardwareTask(void * parameter) {
               audio.playChime(CHIME_TAP_FEEDBACK);
             } else if (currentMode == MODE_AMBIENT && !face4Maze) {
               ambient.nextColour(); // silent: this face is for dark rooms
+            } else if (currentMode == MODE_MASCOT_ROUTINE) {
+              stepMascotScene(+1);
             }
             break;
 
@@ -439,6 +454,8 @@ void core1HardwareTask(void * parameter) {
               preferences.end();
               audio.playChime(CHIME_TAP_FEEDBACK);
               Serial.printf("[CLOCK] Shake detected -> Switched to %s clock view (saved to NVS)\n", clockAnalogView ? "analog" : "digital");
+            } else if (currentMode == MODE_MASCOT_ROUTINE) {
+              stepMascotScene(-1);
             }
             break;
 
@@ -506,7 +523,7 @@ void core1HardwareTask(void * parameter) {
             break;
 
           case MODE_MASCOT_ROUTINE:
-            display.drawMascotFace(roomTemperature, currentHour);
+            display.drawMascotFace(roomTemperature, currentHour, mascotSceneIndex, true);
             break;
 
           case MODE_AMBIENT:

@@ -6,6 +6,7 @@
 #include <WiFi.h>
 #include "PomodoroManager.h"
 #include "DisplayManager.h"
+#include "KubiScenes.h"
 
 // --- SHARED GLOBALS (Defined in main.cpp) ---
 extern volatile KubiMode currentMode;
@@ -14,6 +15,7 @@ extern volatile int batteryPercentage;
 extern volatile bool isScreenOverrideActive;
 extern volatile bool factoryResetRequested;
 extern bool clockAnalogView;
+extern int mascotSceneIndex;
 
 // Diagnostics
 extern volatile float diagAccelX;
@@ -34,6 +36,7 @@ void setupAPIRoutes(AsyncWebServer& server) {
         doc["mode"] = (int)currentMode;
         doc["temp"] = roomTemperature;
         doc["battery"] = batteryPercentage;
+        doc["mascotScene"] = mascotSceneIndex;
 
         // Detailed Pomodoro State
         JsonObject pomoObj = doc["pomodoro"].to<JsonObject>();
@@ -121,6 +124,13 @@ void setupAPIRoutes(AsyncWebServer& server) {
             prefs.begin("kubi_settings", false);
             prefs.putBool("clockAnalog", clockAnalogView);
             prefs.end();
+        }
+
+        // Mascot diorama scene. Like face4Maze, the hardware loop sees the
+        // change and repaints; nothing here touches the display.
+        if (jsonObj["mascotScene"].is<int>() && ALL_KUBI_SCENE_COUNT > 0) {
+            int n = (int)ALL_KUBI_SCENE_COUNT;
+            mascotSceneIndex = ((jsonObj["mascotScene"].as<int>() % n) + n) % n;
         }
 
         // Face 4: Ambient (false) or Maze (true). The hardware loop notices the

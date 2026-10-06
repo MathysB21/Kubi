@@ -20,6 +20,7 @@
 #include "AmbientFace.h"
 #include "MazeGame.h"
 #include "FaceMap.h"
+#include "KubiScenes.h"
 #include "API.h"
 #include "ArduinoJson.h"
 
@@ -81,6 +82,14 @@ volatile float diagAccelZ = 9.8f;
 
 // --- CLOCK SETTINGS ---
 static bool clockAnalogView = false;
+
+// --- FACE 3 --- (mirrors main.cpp)
+static int mascotSceneIndex = 0;
+
+static int wrapMascotScene(int index) {
+    int n = (int)ALL_KUBI_SCENE_COUNT;
+    return n == 0 ? 0 : ((index % n) + n) % n;
+}
 
 // --- FACE 4 --- (mirrors main.cpp)
 bool face4Maze = false;
@@ -223,6 +232,12 @@ void hardwareSimulationThread() {
                             sim_last_chime_time = now;
                         } else if (currentMode == MODE_AMBIENT && !face4Maze) {
                             ambient.nextColour(); // silent, mirrors main.cpp
+                        } else if (currentMode == MODE_MASCOT_ROUTINE && ALL_KUBI_SCENE_COUNT > 0) {
+                            mascotSceneIndex = wrapMascotScene(mascotSceneIndex + 1);
+                            audio.playChime(CHIME_TAP_FEEDBACK);
+                            sim_last_chime_name = "CHIME_TAP_FEEDBACK";
+                            sim_last_chime_time = now;
+                            std::cout << "[SIM MASCOT] Scene " << mascotSceneIndex << std::endl;
                         }
                         break;
 
@@ -240,6 +255,12 @@ void hardwareSimulationThread() {
                             sim_last_chime_name = "CHIME_TAP_FEEDBACK";
                             sim_last_chime_time = now;
                             std::cout << "[SIM CLOCK] Shake toggled view -> " << (clockAnalogView ? "analog" : "digital") << " (saved to Preferences)" << std::endl;
+                        } else if (currentMode == MODE_MASCOT_ROUTINE && ALL_KUBI_SCENE_COUNT > 0) {
+                            mascotSceneIndex = wrapMascotScene(mascotSceneIndex - 1);
+                            audio.playChime(CHIME_TAP_FEEDBACK);
+                            sim_last_chime_name = "CHIME_TAP_FEEDBACK";
+                            sim_last_chime_time = now;
+                            std::cout << "[SIM MASCOT] Scene " << mascotSceneIndex << std::endl;
                         }
                         break;
 
@@ -309,7 +330,7 @@ void hardwareSimulationThread() {
                         break;
 
                     case MODE_MASCOT_ROUTINE:
-                        display.drawMascotFace(roomTemperature, currentHour);
+                        display.drawMascotFace(roomTemperature, currentHour, mascotSceneIndex, true);
                         break;
 
                     case MODE_AMBIENT:
@@ -439,6 +460,7 @@ int main() {
         doc["sleepTimeoutMin"] = display.getSleepTimeoutMinutes();
         doc["isSleeping"] = display.isSleeping();
         doc["face4Maze"] = face4Maze;
+        doc["mascotScene"] = mascotSceneIndex;
 
         std::string jsonStr;
         serializeJson(doc, jsonStr);
@@ -505,6 +527,11 @@ int main() {
             prefs.begin("kubi_settings", false);
             prefs.putBool("clockAnalog", clockAnalogView);
             prefs.end();
+        }
+
+        // Mirrors API.cpp
+        if (jsonObj["mascotScene"].is<int>() && ALL_KUBI_SCENE_COUNT > 0) {
+            mascotSceneIndex = wrapMascotScene(jsonObj["mascotScene"].as<int>());
         }
 
         if (jsonObj["face4Maze"].is<bool>()) {
@@ -694,6 +721,12 @@ int main() {
             std::this_thread::sleep_for(std::chrono::milliseconds(15));
         }
 
+        // Mascot Idle Scene Selection
+        if (obj["mascotScene"].is<int>()) {
+            mascotSceneIndex = wrapMascotScene(obj["mascotScene"].as<int>());
+            std::cout << "[SIM MASCOT] Injected scene index: " << mascotSceneIndex << std::endl;
+        }
+
         JsonDocument respDoc;
         respDoc["status"] = "injected";
         respDoc["lastChime"] = sim_last_chime_name;
@@ -724,6 +757,7 @@ int main() {
         doc["isSleeping"] = display.isSleeping();
         doc["mode"] = (int)currentMode;
         doc["isAnalog"] = clockAnalogView;
+        doc["mascotScene"] = mascotSceneIndex;
         doc["pixelWrites"] = sim_pixel_writes;
         if (face4Maze) {
             JsonObject m = doc["maze"].to<JsonObject>();
