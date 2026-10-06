@@ -89,7 +89,8 @@ Kubi uses **Software-in-the-Loop** simulation:
    - Do not add desktop-specific `#ifdef` hacks directly into `firmware/src/*.cpp` unless strictly necessary. Keep simulation mocks isolated inside `firmware/sim/`.
 4. **Suppress False Taps During Orientation Changes**:
    - Rolling or flipping the cube produces high accelerometer delta transients (`deltaMag > 7.0f`).
-   - In `SensorManager::updateFace()`, always update `_lastTapTime = millis()` and reset `_recentGesture = GESTURE_NONE` during candidate face transitions and when orientation settles to avoid triggering false tap gestures. Drain any pending gestures when switching faces.
+   - In `SensorManager::updateFace()`, always update `_lastTapTime = millis()` and call `dropTap()` during candidate face transitions and when orientation settles to avoid triggering false tap gestures. Drop taps only: a hard shake also flips the dominant axis, and clearing every gesture there swallowed shakes after they were logged. `main.cpp` drains any pending gesture when the face actually switches.
+   - Taps are held for `TAP_CONFIRM_MS` (250 ms) and cancelled if shaking follows, one bout of shaking reports one shake (`SHAKE_QUIET_MS`), and samples under `MIN_VALID_MAG` (failed I2C reads read ~0 g) are discarded. Replay real motion through `SensorManager` when changing any of this; the sim's gesture buttons inject gestures directly and skip all of it.
 5. **C/C++ Preprocessor Comment Gotcha**:
    - Never end a single-line comment with a trailing backslash (`// \`). In standard C/C++, this joins the next line to the comment as a line continuation, deleting whatever was on that line!
 6. **Editing the Setup Portal Strings Does Not Trigger a Rebuild**:

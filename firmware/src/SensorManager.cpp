@@ -9,6 +9,19 @@
 // Tap is 7.0. Tune on hardware: ADXL345 at 16 g is ~0.3 m/s^2 per LSB.
 #define MOTION_WAKE_DELTA 1.5f
 
+// A tap is only reported after this long without shaking: the first jolt of a
+// shake looks exactly like a tap, and a tap on Pomodoro would pause the timer
+// that the shake is about to skip.
+#define TAP_CONFIRM_MS 250
+
+// One bout of shaking is one shake: reversals keep extending this hold-off,
+// and a new shake needs this long of quiet first.
+#define SHAKE_QUIET_MS 600
+
+// A failed I2C read (loose contact) returns ~0 on every axis. Gravity never
+// vanishes on a desk, so a sample this small is a bad read, not motion.
+#define MIN_VALID_MAG 2.0f
+
 SensorManager sensors;
 
 SensorManager::SensorManager()
@@ -26,7 +39,10 @@ SensorManager::SensorManager()
       _shakeCount(0),
       _lastSignX(0),
       _shakeWindowStart(0),
+      _lastShakeTime(0),
       _lastTapTime(0),
+      _tapPending(false),
+      _tapPendingSince(0),
       _lastMotionTime(0),
       _candidatePose(AXIS_Z * 2), // +Z, as before
       _candidateSince(0),
@@ -81,16 +97,22 @@ void SensorManager::loop() {
             float y = event.acceleration.y;
             float z = event.acceleration.z;
 
-            processMotion(x, y, z);
-            updateFace(x, y, z);
+            // Drop bad reads entirely: no gesture, no face change, and they
+            // never become _prev/_last, so the next good sample is no jolt.
+            bool validRead = sqrtf(x * x + y * y + z * z) >= MIN_VALID_MAG;
 
-            _prevX = _lastX;
-            _prevY = _lastY;
-            _prevZ = _lastZ;
+            if (validRead) {
+                processMotion(x, y, z);
+                updateFace(x, y, z);
 
-            _lastX = x;
-            _lastY = y;
-            _lastZ = z;
+                _prevX = _lastX;
+                _prevY = _lastY;
+                _prevZ = _lastZ;
+
+                _lastX = x;
+                _lastY = y;
+                _lastZ = z;
+            }
         }
     }
 
@@ -118,8 +140,16 @@ void SensorManager::processMotion(float x, float y, float z) {
         _lastMotionTime = now;
     }
 
+    // A tap that survived its confirmation window without shaking is real
+    if (_tapPending && now - _tapPendingSince >= TAP_CONFIRM_MS) {
+        _tapPending = false;
+        _recentGesture = GESTURE_TAP;
+        Serial.println("[GESTURE] >>> GENTLE TAP DETECTED <<<");
+    }
+
     // 1. Desk Slam Detection: Violent impulse (>3.5G total magnitude)
     if (totalMag > 35.0f && (now - _lastTapTime > 600)) {
+        _tapPending = false; // its leading edge is not a tap
         _recentGesture = GESTURE_SLAM;
         _lastTapTime = now;
         Serial.println("[GESTURE] >>> DESK SLAM DETECTED! <<<");
@@ -127,29 +157,37 @@ void SensorManager::processMotion(float x, float y, float z) {
     }
 
     // 2. Shake Detection: Rapid sign reversals in X/Y axis
+    bool shakeHoldOff = now - _lastShakeTime < SHAKE_QUIET_MS;
     int currentSignX = (x > 3.0f) ? 1 : ((x < -3.0f) ? -1 : 0);
     if (currentSignX != 0 && currentSignX != _lastSignX) {
-        if (now - _shakeWindowStart > 500) {
+        _lastSignX = currentSignX;
+        if (shakeHoldOff) {
+            // Still the same bout of shaking: keep holding off
+            _lastShakeTime = now;
+        } else if (now - _shakeWindowStart > 500) {
             _shakeCount = 1;
             _shakeWindowStart = now;
         } else {
             _shakeCount++;
+            _tapPending = false; // a second reversal: this is a shake, not a tap
             if (_shakeCount >= 3) {
                 _recentGesture = GESTURE_SHAKE;
                 _shakeCount = 0;
+                _lastShakeTime = now;
                 _lastTapTime = now;
                 Serial.println("[GESTURE] >>> SHAKE DETECTED! <<<");
                 return;
             }
         }
-        _lastSignX = currentSignX;
     }
 
-    // 3. Gentle Tap Detection: Sharp transient acceleration change
-    if (deltaMag > 7.0f && deltaMag < 30.0f && (now - _lastTapTime > 350)) {
-        _recentGesture = GESTURE_TAP;
+    // 3. Gentle Tap Detection: Sharp transient acceleration change, held as a
+    // candidate until TAP_CONFIRM_MS shows it was not the start of a shake
+    bool shaking = shakeHoldOff || (_shakeCount >= 2 && now - _shakeWindowStart <= 500);
+    if (deltaMag > 7.0f && deltaMag < 30.0f && (now - _lastTapTime > 350) && !shaking) {
+        _tapPending = true;
+        _tapPendingSince = now;
         _lastTapTime = now;
-        Serial.println("[GESTURE] >>> GENTLE TAP DETECTED <<<");
     }
 }
 
@@ -158,20 +196,28 @@ void SensorManager::updateFace(float x, float y, float z) {
     int pose = classifyPose(x, y, z);
 
     // Debounce orientation: must remain stable for _faceSettleMs before switching face
+    // Rolling the cube jolts like a tap, so orientation changes drop taps. Only
+    // taps: a hard shake flips the dominant axis too, and erasing the shake
+    // here made it get logged but never acted on.
     if (pose != _candidatePose) {
         _candidatePose = pose;
         _candidateSince = millis();
         _lastTapTime = millis(); // Suppress false tap detection during orientation flips
-        _recentGesture = GESTURE_NONE;
+        dropTap();
     } else if (millis() - _candidateSince > _faceSettleMs) {
         int face = faceForPose(_candidatePose);
         if (face >= 0 && _activeFace != face) {
             _activeFace = face;
             _lastTapTime = millis(); // Suppress tap when face settles
-            _recentGesture = GESTURE_NONE;
+            dropTap();
             Serial.printf("[ORIENTATION] Cube resting on Face %d UP\n", _activeFace + 1);
         }
     }
+}
+
+void SensorManager::dropTap() {
+    _tapPending = false;
+    if (_recentGesture == GESTURE_TAP) _recentGesture = GESTURE_NONE;
 }
 
 KubiGesture SensorManager::getRecentGesture() {

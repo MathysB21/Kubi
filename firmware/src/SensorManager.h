@@ -56,9 +56,12 @@ private:
     int _shakeCount;
     int _lastSignX;
     uint32_t _shakeWindowStart;
+    uint32_t _lastShakeTime;     // last reversal of the most recent reported shake
 
-    // Tap debouncing
+    // Tap debouncing; a tap waits TAP_CONFIRM_MS as a candidate before it counts
     uint32_t _lastTapTime;
+    bool _tapPending;
+    uint32_t _tapPendingSince;
 
     // Screen-wake motion tracking
     uint32_t _lastMotionTime;
@@ -70,6 +73,7 @@ private:
 
     void processMotion(float x, float y, float z);
     void updateFace(float x, float y, float z);
+    void dropTap(); // forget a pending or unread tap (orientation changes)
 };
 
 extern SensorManager sensors;
