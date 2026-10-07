@@ -54,10 +54,11 @@ To allow rapid UI and feature development without physical hardware, Kubi featur
 ### 2.4 Partitioning Table (`firmware/partitions.csv`)
 Standard ESP32 1.25MB app partitions overflow when bundling `TFT_eSPI`, `ESP8266Audio`, and `ESPAsyncWebServer`. The partition table was customized:
 - `app0` / `app1`: 1.5MB each (firmware binary; two slots so OTA can write the idle one)
-- `spiffs` (LittleFS): 960KB (compressed dashboard bundle)
+- `spiffs` (LittleFS): 896KB (compressed dashboard bundle)
+- `coredump`: 64KB (last crash, ELF format; read with `firmware/tools/read_coredump.ps1`)
 - `nvs`: 20KB (persistent user settings)
 
-(Until 2026-10-06 this was a single 2MB `app0` with 1.8MB LittleFS, which made OTA impossible.)
+(Until 2026-10-06 this was a single 2MB `app0` with 1.8MB LittleFS, which made OTA impossible. The coredump partition was added 2026-10-07.)
 
 ---
 
@@ -70,7 +71,7 @@ Standard ESP32 1.25MB app partitions overflow when bundling `TFT_eSPI`, `ESP8266
 - [`firmware/src/PomodoroManager.h`](file:///c:/Development/Kubi/firmware/src/PomodoroManager.h) & [`PomodoroManager.cpp`](file:///c:/Development/Kubi/firmware/src/PomodoroManager.cpp): Pomodoro state machine, idle state, phase countdowns, NVS synchronization.
 - [`firmware/src/AudioManager.h`](file:///c:/Development/Kubi/firmware/src/AudioManager.h) & [`AudioManager.cpp`](file:///c:/Development/Kubi/firmware/src/AudioManager.cpp): I2S tone generator, chime melodies (victory arpeggios, long break fanfare, alerts).
 - [`firmware/src/API.h`](file:///c:/Development/Kubi/firmware/src/API.h) & [`API.cpp`](file:///c:/Development/Kubi/firmware/src/API.cpp): REST endpoints for state, settings, Pomodoro actions, and secret overrides.
-- [`firmware/partitions.csv`](file:///c:/Development/Kubi/firmware/partitions.csv): 2 × 1.5MB OTA app slots / 960KB LittleFS partition table.
+- [`firmware/partitions.csv`](file:///c:/Development/Kubi/firmware/partitions.csv): 2 × 1.5MB OTA app slots / 896KB LittleFS / 64KB coredump partition table.
 - [`firmware/tools/build_sprites.py`](file:///c:/Development/Kubi/firmware/tools/build_sprites.py): Pre-build Pillow sprite slicing script.
 
 ### Digital Twin & Simulation Layer (`firmware/sim/`)

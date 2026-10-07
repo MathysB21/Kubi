@@ -3,6 +3,7 @@
 #include <WiFiMulti.h>
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
+#include <esp_core_dump.h>
 #include <Preferences.h>
 #include <ESPAsyncWebServer.h>
 #include <ESPmDNS.h>
@@ -590,6 +591,14 @@ void setup() {
   Serial.println("\n=================================");
   Serial.println("       PROJECT KUBI BOOTING      ");
   Serial.println("=================================");
+
+  // A crash writes a core dump to the coredump partition; it stays until the
+  // next crash overwrites it. Decode steps are in AGENTS.md.
+  size_t dumpAddr = 0, dumpSize = 0;
+  if (esp_core_dump_image_get(&dumpAddr, &dumpSize) == ESP_OK) {
+    Serial.printf("[CRASH] A core dump from an earlier crash is stored (%u bytes at 0x%X)\n",
+                  (unsigned)dumpSize, (unsigned)dumpAddr);
+  }
 
   // 1. Initialize Hardware Drivers & Managers
   display.init();

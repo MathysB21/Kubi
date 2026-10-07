@@ -138,6 +138,9 @@ Kubi uses **Software-in-the-Loop** simulation:
 * **Screen sleep** policy lives in `DisplayManager` (`noteActivity`, `setSleepAllowed`, `requestWake` for other tasks); which faces sleep is `modeMaySleep()` in `API.h`.
 * **Orientation** has one source of truth: `FACE_POSES` and `SCREEN_OUT_*` in `FaceMap.h` (marked FILL IN FROM BRING-UP). Sensors, rotation, the sim's face buttons and tilt injection, and maze steering all read it.
 * **Cross-task data**: never share an Arduino `String` between the web server task and the hardware loop; see `setOverrideText()/getOverrideText()`. Web handlers must not touch the TFT: they set state and the hardware loop applies it (e.g. rotation follows `currentMode`).
+* **OTA callbacks** (`setupOTA()` in `main.cpp`) run in `loop()`'s task. They set `otaInProgress` and nothing else; the hardware task draws the update screen. Touching the TFT from a second task corrupts TFT_eSPI's shared SPI lock and asserts in FreeRTOS.
+* **Crash debugging**: a panic writes a core dump to the `coredump` partition (`0x3F0000`, ELF format) and the next boot logs `[CRASH] A core dump ... is stored`. Read and decode it over USB with `powershell -ExecutionPolicy Bypass -File firmware/tools/read_coredump.ps1 -Port COMx`. The ELF must be the build that crashed: if the tree has moved on, rebuild that commit in a worktree and pass `-Elf`. For a one-off backtrace from the serial log, `xtensa-esp32-elf-addr2line -pfiaC -e firmware.elf <addresses>` against the same ELF.
+* **Changing `partitions.csv`** only takes effect over USB (`-e esp32dev_usb -t upload`); OTA never rewrites the table. If the `spiffs` partition moves or resizes, run `uploadfs` as well or the dashboard is gone.
 * **The orchestration is still duplicated**: every behaviour change in `main.cpp` `core1HardwareTask` / `API.cpp` must be mirrored in `sim_main.cpp`.
 
 ---
