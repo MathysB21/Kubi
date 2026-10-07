@@ -8,9 +8,18 @@
 # PlatformIO's Python: & "$env:USERPROFILE\.platformio\penv\Scripts\python.exe" -m pip install esp-coredump
 param(
     [string]$Port = "COM5",
-    [string]$Elf = "$PSScriptRoot\..\.pio\build\esp32dev\firmware.elf"
+    [string]$Elf = ""
 )
 $ErrorActionPreference = "Stop"
+
+# Default: the most recently built of the WiFi and USB environments, which is
+# normally the one that was flashed last. Pass -Elf when that is not true.
+if (-not $Elf) {
+    $Elf = Get-ChildItem "$PSScriptRoot\..\.pio\build\esp32dev*\firmware.elf" -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
+    if (-not $Elf) { throw "No firmware.elf under .pio\build. Build the firmware that crashed first (pio run)." }
+    Write-Host "Using $Elf" -ForegroundColor Cyan
+}
 
 $python = "$env:USERPROFILE\.platformio\penv\Scripts\python.exe"
 $gdb = "$env:USERPROFILE\.platformio\packages\toolchain-xtensa-esp32\bin\xtensa-esp32-elf-gdb.exe"
