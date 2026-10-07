@@ -28,6 +28,7 @@ volatile float    roomTemperature        = 21.5f;           // BMP280 temperatur
 volatile int      batteryPercentage      = 100;             // Battery telemetry
 volatile bool     isScreenOverrideActive = false;           // Brother's secret text alert flag
 volatile bool     factoryResetRequested  = false;           // Set by POST /api/factory-reset
+volatile bool     otaInProgress          = false;           // Set by the OTA callbacks (loop() task)
 
 // First connect after setup: "open kubi.local" screen (0 = not showing)
 static uint32_t addressScreenUntil = 0;
@@ -297,10 +298,16 @@ void connectToWiFi() {
 void setupOTA() {
   ArduinoOTA.setHostname("kubi");
 
+  // These callbacks run in loop()'s task, not the hardware task: never touch
+  // the TFT here. Drawing from both tasks corrupts TFT_eSPI's shared SPI lock
+  // flag and asserts in FreeRTOS (every OTA attempt rebooted the cube).
+  // The hardware task sees otaInProgress and draws the update screen itself.
   ArduinoOTA.onStart([]() {
     Serial.println("\n--- [OTA] UPDATE STARTED ---");
-    display.drawBootScreen("OTA Updating...");
-    LittleFS.end(); // Unmount filesystem before OTA flash rewrite
+    otaInProgress = true;
+    // Only a filesystem image rewrites LittleFS; a firmware update writes
+    // the other app slot and the dashboard keeps serving meanwhile.
+    if (ArduinoOTA.getCommand() == U_SPIFFS) LittleFS.end();
   });
 
   ArduinoOTA.onEnd([]() {
@@ -313,6 +320,7 @@ void setupOTA() {
 
   ArduinoOTA.onError([](ota_error_t error) {
     Serial.printf("[OTA] Error[%u]\n", error);
+    otaInProgress = false; // back to the faces; the old firmware keeps running
   });
 
   ArduinoOTA.begin();
@@ -354,12 +362,30 @@ void core1HardwareTask(void * parameter) {
   int previousFace = -1;
   bool mazeWasActive = false;
   bool mazeWasLocked = false;
+  bool otaScreenShown = false;
 
   for (;;) {
     uint32_t now = millis();
 
     if (factoryResetRequested) {
       performFactoryReset();
+    }
+
+    // A WiFi update is being written (see setupOTA): show it and pause the
+    // faces. Success reboots; an error clears the flag and the faces return.
+    if (otaInProgress) {
+      if (!otaScreenShown) {
+        display.requestWake();
+        display.drawBootScreen("Updating...");
+        otaScreenShown = true;
+      }
+      display.loop(); // backlight fade-in if it was asleep
+      vTaskDelay(pdMS_TO_TICKS(20));
+      continue;
+    }
+    if (otaScreenShown) {
+      otaScreenShown = false;
+      display.invalidate();
     }
 
     // 1. Poll Sensors & Display (audio runs in its own task)
