@@ -111,7 +111,7 @@ Kubi uses a **Software-in-the-Loop (SITL)** architecture: core C++ firmware logi
 > **False Tap Suppression Protocol**: Rolling or flipping the cube produces high transient accelerations ($\Delta\text{Mag} > 7.0\text{ m/s}^2$). `SensorManager` updates `_lastTapTime = millis()` on candidate transitions and orientation settling, and drains lingering gestures on face changes to prevent accidental taps during orientation switches.
 
 ### Retro 8-Bit Audio Chimes
-Audio is synthesized over I2S to a MAX98357A amplifier in hardware, and through a real-time Web Audio square-wave synthesizer in the desktop simulator.
+Audio is synthesized on the ESP32 and played through its built-in DAC into a PAM8403 amplifier (or, with one build flag, over I2S to a MAX98357A), and through a real-time Web Audio square-wave synthesizer in the desktop simulator.
 
 | Chime Identifier | Melodic Notes | Durations | Trigger Event |
 | :--- | :--- | :--- | :--- |
@@ -131,17 +131,17 @@ Audio is synthesized over I2S to a MAX98357A amplifier in hardware, and through 
                            +------------------------+
                                |     |     |     |
               +----------------+     |     |     +----------------+
-              | (SPI)                |     |                (I2S) |
+              | (SPI)                |     |        (DAC 25 L, 26 R) |
               v                      |     |                      v
       +---------------+              |     |              +---------------+
-      |  2.0" ST7789  |              |     |              |   MAX98357A   |
-      | 240x320 IPS   |              |     |              | Class D Amp   |
+      |  2.0" ST7789  |              |     |              |    PAM8403    |
+      | 240x320 IPS   |              |     |              | 2x3W stereo   |
       +---------------+              |     |              +---------------+
                                      |     |                      |
                     (PWM Backlight)  |     | (I2C Bus)            v
-                    GPIO 15 ---------+     +---- GPIO 21 (SDA)   +--------+
-                                           +---- GPIO 22 (SCL)   | 3W 8Ω  |
-                                                   |             | Speaker|
+                    GPIO 32 ---------+     +---- GPIO 21 (SDA)   +--------+
+                                           +---- GPIO 22 (SCL)   | 2x 4Ω  |
+                                                   |             |speakers|
                                             +------+------+      +--------+
                                             |             |
                                             v             v
@@ -162,19 +162,22 @@ Audio is synthesized over I2S to a MAX98357A amplifier in hardware, and through 
 | **`GPIO 5`** | Display | `CS` | SPI Chip Select | Display controller select |
 | **`GPIO 2`** | Display | `DC` | Control | Data / Command select |
 | **`GPIO 4`** | Display | `RST` | Reset | Display hardware reset |
-| **`GPIO 15`** | Display | `BLK` / `LED` | PWM Backlight | Backlight brightness / sleep mode dimming |
+| **`GPIO 32`** | Display | `BLK` / `LED` | PWM Backlight | Backlight brightness / sleep mode dimming |
 | **`GPIO 21`** | Sensors | `SDA` | I2C Data | Hardware I2C data bus (ADXL345 + BMP280) |
 | **`GPIO 22`** | Sensors | `SCL` | I2C Clock | Hardware I2C clock bus (ADXL345 + BMP280) |
-| **`GPIO 26`** | Audio | `BCLK` | I2S Bit Clock | Serial data clock for MAX98357A |
-| **`GPIO 25`** | Audio | `LRC` | I2S Word Select | Left/Right channel frame clock |
-| **`GPIO 27`** | Audio | `DIN` | I2S Data In | Serial audio data line |
+| **`GPIO 25`** | Audio | PAM8403 `L` in | DAC1 | Left channel, analog (ESP32 built-in 8-bit DAC) |
+| **`GPIO 26`** | Audio | PAM8403 `R` in | DAC2 | Right channel, analog |
+| **`VIN` / `GND`** | Audio | PAM8403 `power +` / `−`, input `G` | 5V | Amp power and signal ground |
+
+With `KUBI_AUDIO_INTERNAL_DAC` removed from `platformio.ini`, audio goes over I2S to a MAX98357A instead: `BCLK` GPIO 26, `LRC` GPIO 25, `DIN` GPIO 27.
 
 ### Power Supply & Flash Partitions
 * **Battery Subsystem**: 3× 18650 Li-ion cells wired in parallel (~10,000mAh total) managed by an IP5328P / IP5306 module providing pass-through USB-C charging and multi-day battery life.
 * **Custom Partition Table (`firmware/partitions.csv`)**:
-  - `app0`: **2.0 MB** (compiled firmware binary with TFT_eSPI and ESP8266Audio)
-  - `spiffs` (LittleFS): **1.8 MB** (gzipped companion web dashboard and static assets)
-  - `nvs`: **32 KB** (persistent configuration and calibration)
+  - `app0` / `app1`: **1.5 MB** each (two slots so WiFi/OTA updates write the idle one)
+  - `spiffs` (LittleFS): **896 KB** (companion web dashboard and static assets)
+  - `coredump`: **64 KB** (last crash, read with `firmware/tools/read_coredump.ps1`)
+  - `nvs`: **20 KB** (persistent configuration and calibration)
 
 ---
 

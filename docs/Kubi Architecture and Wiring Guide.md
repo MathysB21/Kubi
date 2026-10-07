@@ -124,27 +124,21 @@ I2C Clock (ADXL345 + BMP280)
 
 GPIO 25
 
-Audio (I2S)
+Audio (DAC)
 
-LRC / WSEL
+PAM8403 input L
 
-Word Select (Left/Right Clock)
+Left channel, analog from the ESP32's built-in DAC
 
 GPIO 26
 
-Audio (I2S)
+Audio (DAC)
 
-BCLK
+PAM8403 input R
 
-Bit Clock
+Right channel, analog
 
-GPIO 27
-
-Audio (I2S)
-
-DIN
-
-Data In to Amplifier
+(No MAX98357A was in stock, so audio uses the ESP32's own DAC into a PAM8403 analog amp, build flag KUBI_AUDIO_INTERNAL_DAC in platformio.ini. With a MAX98357A instead, remove the flag and wire I2S: LRC to GPIO 25, BCLK to GPIO 26, DIN to GPIO 27.)
 
 3. Physical Wiring Strategy (The Protoboard Shield)
 
@@ -174,11 +168,11 @@ Step 3: The Brains & Brawn (IMU & Audio)
 
 The IMU: Connect the SEN0140's VCC to the 3.3V Rail and GND to the GND Rail. Connect SDA (GPIO 21) and SCL (GPIO 22). Because both the accelerometer and barometer share the I2C bus, you only need these 4 wires!
 
-The Audio Amp: Connect the MAX98357A's VIN directly to the Main 5V Rail (not the 3.3V rail). It needs 5V to push the full 3 Watts to the speaker. Connect GND to the GND Rail.
+The Audio Amp (PAM8403): Connect "power +" directly to the Main 5V Rail (not the 3.3V rail) and "power -" to the GND Rail.
 
-Wire the I2S pins: LRC to GPIO 25, BCLK to GPIO 26, and DIN to GPIO 27.
+Wire the inputs: L to GPIO 25, R to GPIO 26, and G to the GND Rail.
 
-Connect the two speaker wires to the screw terminals on the MAX98357A.
+Speakers: one speaker on "lout +" / "lout -", the other on "rout +" / "rout -". Never connect a speaker wire to GND: both outputs are driven (bridge-tied load). The volume knob sits in front of the amp; start low, the ESP32's DAC is louder than the I2S path was tuned for.
 
 Assembly Tip for Resilience
 

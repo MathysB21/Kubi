@@ -59,8 +59,15 @@ private:
     uint32_t _phase;
     uint32_t _phaseInc;
 
+    // KUBI_AUDIO_INTERNAL_DAC: the ESP32 DAC idles at 0 V but plays around
+    // mid-scale, so the level fades between the two around each chime.
+    bool _dacMode;
+    float _dcLevel; // 0 = DAC at 0 V (idle), 1 = mid-scale (playing); stays 1 for I2S
+
     void startSequence(KubiChime chime);
     void loadNote();
+    int16_t toneSample();
+    int16_t dcOffset() const;
     bool writeFrame(int16_t value);
 };
 
