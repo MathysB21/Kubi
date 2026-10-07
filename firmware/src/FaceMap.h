@@ -14,21 +14,24 @@ struct FacePose {
 };
 
 // ============================================================================
-// FILL IN FROM BRING-UP (TSK-413 raw accel capture -> TSK-453)
+// MEASURED ON HARDWARE (firmware/tools/capture_faces.ps1, 2026-10-07)
 //
-// The cube rolls around its screen normal, so all four resting positions
-// put gravity in the SAME plane: every row below should use the same two
-// in-plane axes (e.g. +X, +Y, -X, -Y) with signs and rotations read off the
-// real cube. The rows below reproduce the pre-bring-up guess, which spreads
-// the faces over Z, X and Y. On hardware one of these faces is unreachable
-// and one real resting position is ignored. Do not "fix" them without the
-// raw x/y/z readings for each position.
+// The cube rolls around its screen normal, so all four resting positions put
+// gravity in the same plane: two axes, in opposite pairs. Face 1 is the panel
+// upright in portrait; each next face is a quarter turn to the left (top edge
+// goes left). Raw readings in m/s^2; Z reads ~-1.5 at rest on every face,
+// which is this ADXL345's zero-g offset, not tilt.
+//
+// Measured with the sensor and display on the breadboard. If the sensor sits
+// differently relative to the screen in the cube, rerun the script and paste
+// its output here. Rotations assume a left roll means setRotation()+1; if
+// Faces 2 and 4 render upside down, swap their rotations (1 <-> 3).
 // ============================================================================
 static const FacePose FACE_POSES[] = {
-    { AXIS_Z, +1, 0 },  // Face 1: Clock      (guess)
-    { AXIS_X, +1, 1 },  // Face 2: Pomodoro   (guess)
-    { AXIS_Y, +1, 2 },  // Face 3: Mascot     (guess)
-    { AXIS_X, -1, 3 },  // Face 4: Ambient    (guess)
+    { AXIS_X, +1, 0 },  // Face 1: Clock     measured ( 9.9,  -0.2, -2.7)
+    { AXIS_Y, -1, 1 },  // Face 2: Pomodoro  measured ( 0.2, -10.5, -2.4)
+    { AXIS_X, -1, 2 },  // Face 3: Mascot    measured (-10.5, -0.4, -0.9)
+    { AXIS_Y, +1, 3 },  // Face 4: Ambient   measured (-0.5,  10.2, -1.3)
 };
 static const int FACE_COUNT = sizeof(FACE_POSES) / sizeof(FACE_POSES[0]);
 
@@ -50,12 +53,13 @@ inline int faceForPose(int poseId) {
 }
 
 // ============================================================================
-// FILL IN FROM BRING-UP: the screen's outward normal in accelerometer axes.
-// The cube rolls around it, so it is the same for every face. If left/right
-// steering in the maze comes out mirrored on the real cube, flip the sign.
+// The screen's outward normal in accelerometer axes (towards the viewer),
+// derived from Face 1 and Face 2 above: up(Face 2) x up(Face 1). Agrees with
+// the cube lying flat, screen up, reading ~+8.3 on Z. If left/right steering
+// in the maze comes out mirrored on the real cube, flip the sign.
 // ============================================================================
-static const GravityAxis SCREEN_OUT_AXIS = AXIS_Z;  // guess
-static const int8_t      SCREEN_OUT_SIGN = +1;      // guess
+static const GravityAxis SCREEN_OUT_AXIS = AXIS_Z;
+static const int8_t      SCREEN_OUT_SIGN = +1;
 
 struct KVec3 { float x, y, z; };
 
@@ -79,8 +83,8 @@ inline void screenFrame(int face, KVec3& up, KVec3& right, KVec3& out) {
     out = kAxis(SCREEN_OUT_AXIS, SCREEN_OUT_SIGN);
     right = kCross(up, out);
     if (kDot(right, right) < 0.5f) {
-        // Guess table puts this face's gravity on the screen normal (see
-        // above); pick any perpendicular axis so tilt still does something.
+        // Only if a table row ever puts gravity on the screen normal (a bad
+        // capture); pick any perpendicular axis so tilt still does something.
         out = kAxis(up.x != 0 ? AXIS_Y : AXIS_X, 1);
         right = kCross(up, out);
     }
