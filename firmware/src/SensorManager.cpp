@@ -22,6 +22,12 @@
 // vanishes on a desk, so a sample this small is a bad read, not motion.
 #define MIN_VALID_MAG 2.0f
 
+// Shakes are read from the reading minus a slow gravity estimate. At 50 Hz an
+// alpha of 0.04 is a ~0.5 s time constant: it follows a roll to a new face
+// within a second but barely moves during a 3-6 Hz shake.
+#define GRAVITY_ALPHA 0.04f
+#define SHAKE_THRESHOLD 3.0f // m/s^2 of dynamic acceleration for a reversal
+
 SensorManager sensors;
 
 SensorManager::SensorManager()
@@ -36,9 +42,11 @@ SensorManager::SensorManager()
       _temperature(21.5f),
       _activeFace(0),
       _recentGesture(GESTURE_NONE),
-      _shakeCount(0),
-      _lastSignX(0),
-      _shakeWindowStart(0),
+      _gravity{ 0, 0, 9.8f },
+      _gravityInit(false),
+      _shakeCount{ 0, 0, 0 },
+      _shakeSign{ 0, 0, 0 },
+      _shakeWindowStart{ 0, 0, 0 },
       _lastShakeTime(0),
       _lastTapTime(0),
       _tapPending(false),
@@ -156,34 +164,48 @@ void SensorManager::processMotion(float x, float y, float z) {
         return;
     }
 
-    // 2. Shake Detection: Rapid sign reversals in X/Y axis
+    // 2. Shake Detection: rapid sign reversals of the dynamic acceleration
+    // (reading minus a slow gravity estimate) on any axis. Raw X used to be
+    // the signal, but standing upright gravity sits on X or Y (FaceMap.h), so
+    // on Faces 1 and 3 X never crossed zero and a shake could not register.
+    if (!_gravityInit) {
+        _gravity[0] = x; _gravity[1] = y; _gravity[2] = z;
+        _gravityInit = true;
+    }
+    float accel[3] = { x, y, z };
     bool shakeHoldOff = now - _lastShakeTime < SHAKE_QUIET_MS;
-    int currentSignX = (x > 3.0f) ? 1 : ((x < -3.0f) ? -1 : 0);
-    if (currentSignX != 0 && currentSignX != _lastSignX) {
-        _lastSignX = currentSignX;
-        if (shakeHoldOff) {
-            // Still the same bout of shaking: keep holding off
-            _lastShakeTime = now;
-        } else if (now - _shakeWindowStart > 500) {
-            _shakeCount = 1;
-            _shakeWindowStart = now;
-        } else {
-            _shakeCount++;
-            _tapPending = false; // a second reversal: this is a shake, not a tap
-            if (_shakeCount >= 3) {
-                _recentGesture = GESTURE_SHAKE;
-                _shakeCount = 0;
+    bool shaking = shakeHoldOff;
+    for (int a = 0; a < 3; a++) {
+        float dynamic = accel[a] - _gravity[a];
+        _gravity[a] += GRAVITY_ALPHA * dynamic;
+
+        int sign = (dynamic > SHAKE_THRESHOLD) ? 1 : ((dynamic < -SHAKE_THRESHOLD) ? -1 : 0);
+        if (sign != 0 && sign != _shakeSign[a]) {
+            _shakeSign[a] = sign;
+            if (shakeHoldOff) {
+                // Still the same bout of shaking: keep holding off
                 _lastShakeTime = now;
-                _lastTapTime = now;
-                Serial.println("[GESTURE] >>> SHAKE DETECTED! <<<");
-                return;
+            } else if (now - _shakeWindowStart[a] > 500) {
+                _shakeCount[a] = 1;
+                _shakeWindowStart[a] = now;
+            } else {
+                _shakeCount[a]++;
+                _tapPending = false; // a second reversal: this is a shake, not a tap
+                if (_shakeCount[a] >= 3) {
+                    _recentGesture = GESTURE_SHAKE;
+                    for (int b = 0; b < 3; b++) _shakeCount[b] = 0;
+                    _lastShakeTime = now;
+                    _lastTapTime = now;
+                    Serial.println("[GESTURE] >>> SHAKE DETECTED! <<<");
+                    return;
+                }
             }
         }
+        if (_shakeCount[a] >= 2 && now - _shakeWindowStart[a] <= 500) shaking = true;
     }
 
     // 3. Gentle Tap Detection: Sharp transient acceleration change, held as a
     // candidate until TAP_CONFIRM_MS shows it was not the start of a shake
-    bool shaking = shakeHoldOff || (_shakeCount >= 2 && now - _shakeWindowStart <= 500);
     if (deltaMag > 7.0f && deltaMag < 30.0f && (now - _lastTapTime > 350) && !shaking) {
         _tapPending = true;
         _tapPendingSince = now;

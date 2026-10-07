@@ -52,10 +52,12 @@ private:
     int _activeFace;
     KubiGesture _recentGesture;
 
-    // Shake detection tracking
-    int _shakeCount;
-    int _lastSignX;
-    uint32_t _shakeWindowStart;
+    // Shake detection tracking, per axis, on the reading minus _gravity
+    float _gravity[3];           // slow low-pass of the reading (gravity estimate)
+    bool _gravityInit;
+    int _shakeCount[3];
+    int _shakeSign[3];
+    uint32_t _shakeWindowStart[3];
     uint32_t _lastShakeTime;     // last reversal of the most recent reported shake
 
     // Tap debouncing; a tap waits TAP_CONFIRM_MS as a candidate before it counts
