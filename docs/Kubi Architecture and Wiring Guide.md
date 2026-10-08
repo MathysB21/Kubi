@@ -146,13 +146,15 @@ To make this durable and fit inside the 10cm³ wooden cube, you will build a "sh
 
 Step 1: The Power Rail
 
-Take the 5V output from your power bank module and solder it to a trace on the edge of the protoboard. This is your Main 5V Rail.
+Power comes from the DFRobot 2 x 18650 holder (DFR0969) with two identical INR18650-26E cells (same batch, same charge; the holder puts them in parallel). Set its DIP switch to HOLD: in NORMAL it shuts its output off when the current is low, which a quiet cube can be. Its USB-C input is the cube's charging port, so it has to sit against a wall with a hole for it.
+
+Run the holder's 5V output (one of its 5V/GND header pairs) to a trace on the edge of the protoboard. This is your Main 5V Rail. Leave the holder's 3.3V outputs unused.
 
 Create a Common Ground (GND) Rail next to it.
 
 Solder the female headers for the ESP32 onto the board. Connect the ESP32's VIN to the 5V rail, and GND to the GND rail.
 
-Create a 3.3V Rail on the board, fed only by the ESP32's 3V3 pin.
+Create a 3.3V Rail on the board, fed only by the ESP32's 3V3 pin. Never also feed it from the holder's 3.3V output: two regulators on one rail fight.
 
 Step 2: The Display (SPI)
 
@@ -173,6 +175,41 @@ The Audio Amp (PAM8403): Connect "power +" directly to the Main 5V Rail (not the
 Wire the inputs: L to GPIO 25, R to GPIO 26, and G to the GND Rail.
 
 Speakers: one speaker on "lout +" / "lout -", the other on "rout +" / "rout -". Never connect a speaker wire to GND: both outputs are driven (bridge-tied load). The volume knob sits in front of the amp; start low, the ESP32's DAC is louder than the I2S path was tuned for.
+
+Step 4: Battery Sense (for the battery percentage)
+
+The holder does not report its charge, so the ESP32 measures the cell voltage itself through a divider that halves it (4.2 V full becomes 2.1 V, inside the ADC's range):
+
+- R1, 100 kΩ, from the cells' + terminal (the holder's battery + clip, both cells share it) to a sense node.
+- R2, 100 kΩ, from the sense node to GND.
+- C1, 100 nF, from the sense node to GND, right next to the ESP32 pin. The divider is too high-impedance for the ADC on its own; the capacitor holds the voltage steady while it samples.
+- Sense node to GPIO 34 (an ADC1 pin, which keeps working while WiFi is on; ADC2 pins do not; input-only, which is all this needs).
+
+Solder R1 directly onto the battery + clip, so the wire that runs to the perfboard is already behind 100 kΩ: if that wire ever chafes through to GND, nothing happens. A bare wire from battery + across the cube would be an unfused short waiting to happen. The divider draws about 20 µA, negligible next to the cube's ~150 mA.
+
+Until this is wired, GPIO 34 floats and the firmware keeps reporting 100%; the reading code is added once the divider exists (TSK-391).
+
+Connection Checklist (tick off while soldering)
+
+| From | To | Note |
+|---|---|---|
+| Holder 5V out | 5V rail | HOLD mode |
+| Holder GND | GND rail | |
+| 5V rail | ESP32 VIN, PAM8403 power + | |
+| GND rail | ESP32 GND, PAM8403 power -, PAM8403 input G, display GND, IMU GND, R2, C1 | one common ground |
+| ESP32 3V3 | 3.3V rail | the only source on this rail |
+| 3.3V rail | display VCC, IMU VCC | |
+| GPIO 23 / 18 | display DIN / CLK | SPI |
+| GPIO 5 / 2 / 4 | display CS / DC / RST | GPIO 2 is a boot pin; hold BOOT if a USB flash fails |
+| GPIO 32 | display BL | backlight PWM |
+| GPIO 21 / 22 | IMU SDA / SCL | I2C, ADXL345 at 0x53, BMP280 at 0x77 |
+| GPIO 25 / 26 | PAM8403 input L / R | DAC audio |
+| PAM8403 lout + / - | speaker 1 | never to GND |
+| PAM8403 rout + / - | speaker 2 | never to GND |
+| Battery + clip | R1 (100 kΩ) to sense node | R1 at the clip |
+| Sense node | GPIO 34, R2 (100 kΩ) to GND, C1 (100 nF) to GND | C1 next to the ESP32 |
+
+After assembly, the sensor's position relative to the screen has changed from the breadboard, so rerun firmware/tools/capture_faces.ps1 and update FaceMap.h (TSK-768).
 
 Assembly Tip for Resilience
 

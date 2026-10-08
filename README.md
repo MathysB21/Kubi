@@ -168,6 +168,7 @@ Audio is synthesized on the ESP32 and played through its built-in DAC into a PAM
 | **`GPIO 25`** | Audio | PAM8403 `L` in | DAC1 | Left channel, analog (ESP32 built-in 8-bit DAC) |
 | **`GPIO 26`** | Audio | PAM8403 `R` in | DAC2 | Right channel, analog |
 | **`VIN` / `GND`** | Audio | PAM8403 `power +` / `−`, input `G` | 5V | Amp power and signal ground |
+| **`GPIO 34`** | Power | Battery divider midpoint | ADC1 | Cell voltage / 2 (100k/100k from battery +, 100 nF to GND); battery % (not read yet) |
 
 With `KUBI_AUDIO_INTERNAL_DAC` removed from `platformio.ini`, audio goes over I2S to a MAX98357A instead: `BCLK` GPIO 26, `LRC` GPIO 25, `DIN` GPIO 27.
 
