@@ -5,6 +5,8 @@
 #include <vector>
 #include <string>
 #include <sstream>
+#include <mutex>
+#include <cstring>
 
 #include "httplib.h"
 #include "Arduino.h"
@@ -15,7 +17,10 @@
 #include "SensorManager.h"
 #include "AudioManager.h"
 #include "PomodoroManager.h"
-#include "ScheduleManager.h"
+#include "AmbientFace.h"
+#include "MazeGame.h"
+#include "FaceMap.h"
+#include "KubiScenes.h"
 #include "API.h"
 #include "ArduinoJson.h"
 
@@ -24,6 +29,8 @@ float sim_accel_x = 0.0f;
 float sim_accel_y = 0.0f;
 float sim_accel_z = 9.8f;
 float sim_temperature = 22.0f;
+float sim_tilt_roll = 0.0f;   // degrees, + = right side down (see FaceMap.h tiltedGravity)
+float sim_tilt_pitch = 0.0f;  // degrees, + = top edge away
 int sim_hour_override = -1;
 int sim_minute_override = -1;
 uint8_t sim_backlight_value = 255;
@@ -42,19 +49,50 @@ bool Preferences::_loaded = false;
 volatile KubiMode currentMode            = MODE_CLOCK_IDLE;
 volatile float    roomTemperature        = 22.0f;
 volatile int      batteryPercentage      = 100;
-String            secretIcalUrl          = "";
 volatile bool     isScreenOverrideActive = false;
-String            screenOverrideText     = "";
+volatile bool     factoryResetRequested  = false;
+
+// Mirrors main.cpp first-connect address screen
+static uint32_t addressScreenUntil = 0;
+static String   addressScreenIp;
+
+// Mirrors main.cpp setOverrideText()/getOverrideText() (portMUX there)
+static char       overrideTextBuf[OVERRIDE_TEXT_MAX] = "";
+static std::mutex overrideTextMutex;
+
+void setOverrideText(const char* text) {
+    size_t len = strnlen(text, OVERRIDE_TEXT_MAX - 1);
+    std::lock_guard<std::mutex> lock(overrideTextMutex);
+    memcpy(overrideTextBuf, text, len);
+    overrideTextBuf[len] = '\0';
+}
+
+String getOverrideText() {
+    char local[OVERRIDE_TEXT_MAX];
+    {
+        std::lock_guard<std::mutex> lock(overrideTextMutex);
+        memcpy(local, overrideTextBuf, OVERRIDE_TEXT_MAX);
+    }
+    return String(local);
+}
 
 volatile float diagAccelX = 0.0f;
 volatile float diagAccelY = 0.0f;
 volatile float diagAccelZ = 9.8f;
 
-// --- CLOCK & SCENE SETTINGS ---
-static bool clockShowDetails = false;
+// --- CLOCK SETTINGS ---
 static bool clockAnalogView = false;
-static uint32_t clockDetailsTimeout = 0;
+
+// --- FACE 3 --- (mirrors main.cpp)
 static int mascotSceneIndex = 0;
+
+static int wrapMascotScene(int index) {
+    int n = (int)ALL_KUBI_SCENE_COUNT;
+    return n == 0 ? 0 : ((index % n) + n) % n;
+}
+
+// --- FACE 4 --- (mirrors main.cpp)
+bool face4Maze = false;
 
 // Helper: Convert 16-bit RGB565 to 32-bit RGBA (for web canvas)
 static void convertRGB565toRGBA32(const uint16_t* src, uint8_t* dst, int count) {
@@ -75,18 +113,27 @@ static void convertRGB565toRGBA32(const uint16_t* src, uint8_t* dst, int count) 
 // Background Hardware Simulation Thread
 static std::atomic<bool> sim_running(true);
 
+void simFactoryReset();
+
 void hardwareSimulationThread() {
     std::cout << "[SIM] Core 1 Hardware Loop Started." << std::endl;
     uint32_t lastRenderTime = 0;
     uint32_t lastPomoTick = 0;
+    uint32_t lastMotionSeen = 0;
     int previousFace = -1;
+    bool mazeWasActive = false;
+    bool mazeWasLocked = false;
 
     while (sim_running) {
         uint32_t now = millis();
 
-        // 1. Poll Sensors & Audio Engine
+        if (factoryResetRequested) {
+            simFactoryReset();
+            now = millis();
+        }
+
+        // 1. Poll Sensors & Display (audio runs in its own thread, like main.cpp audioTask)
         sensors.loop();
-        audio.loop();
         display.loop();
 
         // Synchronize active firmware chime to simulator telemetry
@@ -127,10 +174,29 @@ void hardwareSimulationThread() {
                 std::cout << "[KUBI ORIENTATION] >>> Face " << (activeFace + 1)
                           << " UP: Screen rotated upright <<<" << std::endl;
 
-                clockShowDetails = false;
                 sim_injected_gesture = GESTURE_NONE;
                 sensors.getRecentGesture();
+                display.noteActivity();
             }
+        }
+
+        // Mirrors main.cpp: rotation follows currentMode, applied on this thread only
+        display.setRotationForFace((int)currentMode);
+
+        bool mazeActive = mazeFaceActive(currentMode);
+        if (mazeActive && !mazeWasActive) maze.begin();
+        mazeWasActive = mazeActive;
+        // Face lock while playing (mirrors main.cpp)
+        bool mazeLocked = mazeActive && maze.isPlaying(now);
+        sensors.setFaceSettleTime(mazeLocked ? FACE_SETTLE_LOCKED : FACE_SETTLE_MS);
+        if (mazeLocked != mazeWasLocked) {
+            std::cout << "[MAZE] Face lock " << (mazeLocked ? "on" : "off") << std::endl;
+            mazeWasLocked = mazeLocked;
+        }
+        if (mazeActive) {
+            float ax, ay, az;
+            sensors.getAcceleration(ax, ay, az);
+            maze.update(ax, ay, az, now);
         }
 
         // 5. Gesture Handling
@@ -140,39 +206,38 @@ void hardwareSimulationThread() {
             gesture = injected;
         }
         if (gesture != GESTURE_NONE) {
-            if (display.isSleeping()) {
-                display.wakeScreen();
-                audio.playChime(CHIME_WAKE_PING);
-                sim_last_chime_name = "CHIME_WAKE_PING";
-                sim_last_chime_time = now;
+            if (display.noteActivity()) {
+                std::cout << "[SIM GESTURE] Gesture woke the screen (swallowed)." << std::endl;
             } else {
                 switch (gesture) {
                     case GESTURE_TAP:
                         std::cout << "[SIM GESTURE] Tap detected." << std::endl;
-                        if (isScreenOverrideActive) {
+                        if (addressScreenUntil) {
+                            addressScreenUntil = 0;
+                            audio.playChime(CHIME_TAP_FEEDBACK);
+                            sim_last_chime_name = "CHIME_TAP_FEEDBACK";
+                            sim_last_chime_time = now;
+                        } else if (isScreenOverrideActive) {
                             isScreenOverrideActive = false;
                             audio.playChime(CHIME_TAP_FEEDBACK);
                             sim_last_chime_name = "CHIME_TAP_FEEDBACK";
                             sim_last_chime_time = now;
                         } else if (currentMode == MODE_POMODORO) {
                             pomodoro.handleTap();
-                            sim_last_chime_name = pomodoro.hasChimed() ? "CHIME_TAP_FEEDBACK" : "CHIME_TAP_FEEDBACK";
+                            sim_last_chime_name = "CHIME_TAP_FEEDBACK";
                             sim_last_chime_time = now;
                         } else if (currentMode == MODE_CLOCK_IDLE) {
                             audio.playChime(CHIME_TAP_FEEDBACK);
                             sim_last_chime_name = "CHIME_TAP_FEEDBACK";
                             sim_last_chime_time = now;
-                        } else if (currentMode == MODE_SCHEDULE_AGENDA) {
-                            schedule.handleTap();
+                        } else if (currentMode == MODE_AMBIENT && !face4Maze) {
+                            ambient.nextColour(); // silent, mirrors main.cpp
+                        } else if (currentMode == MODE_MASCOT_ROUTINE && ALL_KUBI_SCENE_COUNT > 0) {
+                            mascotSceneIndex = wrapMascotScene(mascotSceneIndex + 1);
                             audio.playChime(CHIME_TAP_FEEDBACK);
                             sim_last_chime_name = "CHIME_TAP_FEEDBACK";
                             sim_last_chime_time = now;
-                        } else if (currentMode == MODE_MASCOT_ROUTINE) {
-                            mascotSceneIndex = (mascotSceneIndex + 1) % 10;
-                            audio.playChime(CHIME_TAP_FEEDBACK);
-                            sim_last_chime_name = "CHIME_TAP_FEEDBACK";
-                            sim_last_chime_time = now;
-                            std::cout << "[SIM MASCOT] Tap -> Next scene: " << mascotSceneIndex << std::endl;
+                            std::cout << "[SIM MASCOT] Scene " << mascotSceneIndex << std::endl;
                         }
                         break;
 
@@ -190,18 +255,12 @@ void hardwareSimulationThread() {
                             sim_last_chime_name = "CHIME_TAP_FEEDBACK";
                             sim_last_chime_time = now;
                             std::cout << "[SIM CLOCK] Shake toggled view -> " << (clockAnalogView ? "analog" : "digital") << " (saved to Preferences)" << std::endl;
-                        } else if (currentMode == MODE_SCHEDULE_AGENDA) {
-                            schedule.handleShake();
+                        } else if (currentMode == MODE_MASCOT_ROUTINE && ALL_KUBI_SCENE_COUNT > 0) {
+                            mascotSceneIndex = wrapMascotScene(mascotSceneIndex - 1);
                             audio.playChime(CHIME_TAP_FEEDBACK);
                             sim_last_chime_name = "CHIME_TAP_FEEDBACK";
                             sim_last_chime_time = now;
-                            std::cout << "[SIM SCHEDULE] Shake jumped to today" << std::endl;
-                        } else if (currentMode == MODE_MASCOT_ROUTINE) {
-                            mascotSceneIndex = (mascotSceneIndex - 1 + 10) % 10;
-                            audio.playChime(CHIME_TAP_FEEDBACK);
-                            sim_last_chime_name = "CHIME_TAP_FEEDBACK";
-                            sim_last_chime_time = now;
-                            std::cout << "[SIM MASCOT] Shake -> Prev scene: " << mascotSceneIndex << std::endl;
+                            std::cout << "[SIM MASCOT] Scene " << mascotSceneIndex << std::endl;
                         }
                         break;
 
@@ -218,16 +277,28 @@ void hardwareSimulationThread() {
             }
         }
 
-        if (clockShowDetails && now > clockDetailsTimeout) {
-            clockShowDetails = false;
+        // 5b. Inactivity sleep (mirrors main.cpp)
+        uint32_t motionTime = sensors.getLastMotionTime();
+        if (motionTime != lastMotionSeen) {
+            lastMotionSeen = motionTime;
+            display.noteActivity();
         }
+        if (addressScreenUntil && (int32_t)(now - addressScreenUntil) >= 0) {
+            addressScreenUntil = 0;
+        }
+        bool bannerUp = isScreenOverrideActive || addressScreenUntil;
+        display.setSleepAllowed(modeMaySleep(currentMode) && !bannerUp);
+        display.setAwakeBrightness(currentMode == MODE_AMBIENT && !face4Maze && !bannerUp ? AmbientFace::BACKLIGHT : 255);
 
-        // 6. Display Rendering (~25Hz tick)
-        if (now - lastRenderTime >= 40 && !display.isSleeping()) {
+        // 6. Display Rendering: same ticks as hardware (was 40 ms here, 50 there)
+        uint32_t renderTick = mazeActive ? RENDER_TICK_MAZE_MS : RENDER_TICK_MS;
+        if (now - lastRenderTime >= renderTick && !display.isSleeping()) {
             lastRenderTime = now;
 
             if (isScreenOverrideActive) {
-                display.drawOverrideAlert(screenOverrideText);
+                display.drawOverrideAlert(getOverrideText());
+            } else if (addressScreenUntil) {
+                display.drawAddressScreen(addressScreenIp);
             } else {
                 struct tm timeinfo;
                 int currentHour = 12, currentMin = 0;
@@ -242,8 +313,7 @@ void hardwareSimulationThread() {
 
                 switch (currentMode) {
                     case MODE_CLOCK_IDLE:
-                        display.drawClockFace(currentHour, currentMin, currentWday, currentMday, currentMon, clockShowDetails, clockAnalogView,
-                                              "Design Review 14:00", "^ AAPL +1.2% | BTC $92k");
+                        display.drawClockFace(currentHour, currentMin, currentWday, currentMday, currentMon, clockAnalogView);
                         break;
 
                     case MODE_POMODORO:
@@ -263,8 +333,9 @@ void hardwareSimulationThread() {
                         display.drawMascotFace(roomTemperature, currentHour, mascotSceneIndex, true);
                         break;
 
-                    case MODE_SCHEDULE_AGENDA:
-                        display.drawScheduleFace(schedule.getCurrentDayTitle(), schedule.getCurrentPageItems(), schedule.hasIcs(), schedule.hasEvents());
+                    case MODE_AMBIENT:
+                        if (face4Maze) display.drawMazeFace();
+                        else display.drawAmbientFace();
                         break;
 
                     default:
@@ -274,6 +345,46 @@ void hardwareSimulationThread() {
         }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
+
+// Mirrors main.cpp performFactoryReset(). The sim cannot reboot, so after the
+// wipe it reloads defaults and replays onboarding: the setup screen (as if
+// the portal were up) and then the first-connect address screen.
+void simFactoryReset() {
+    std::cout << "[SIM RESET] Factory reset: wiping kubi_settings and wifi_memory" << std::endl;
+    factoryResetRequested = false;
+    display.setAwakeBrightness(255);
+    display.setSleep(false);
+    display.drawResetScreen();
+
+    Preferences prefs;
+    prefs.begin("kubi_settings", false);
+    prefs.clear();
+    prefs.end();
+    prefs.begin("wifi_memory", false);
+    prefs.clear();
+    prefs.end();
+    std::this_thread::sleep_for(std::chrono::milliseconds(2500));
+
+    // "Reboot": defaults as a fresh cube would load them
+    clockAnalogView = false;
+    display.setSleepTimeoutMinutes(5);
+    pomodoro.init();
+    isScreenOverrideActive = false;
+
+    display.drawSetupScreen();
+    std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+    addressScreenIp = "127.0.0.1";
+    addressScreenUntil = millis() + ADDRESS_SCREEN_MS;
+}
+
+// Mirrors main.cpp audioTask: paced by the mock I2S queue draining at the sample rate
+void audioThreadMain() {
+    while (sim_running) {
+        if (!audio.pump()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
     }
 }
 
@@ -293,15 +404,17 @@ int main() {
     Preferences prefs;
     prefs.begin("kubi_settings", false);
     clockAnalogView = prefs.getBool("clockAnalog", false);
+    face4Maze = prefs.getBool("face4Maze", false);
+    display.setSleepTimeoutMinutes(prefs.getInt("sleepMin", 5));
     prefs.end();
 
     display.init();
     sensors.init();
     audio.init();
     pomodoro.init();
-    schedule.init();
 
-    // 2. Start hardware simulation loop
+    // 2. Start hardware simulation loop and audio pump
+    std::thread audioThread(audioThreadMain);
     std::thread hwThread(hardwareSimulationThread);
 
     // 3. Setup HTTP server
@@ -323,10 +436,6 @@ int main() {
         doc["mode"] = (int)currentMode;
         doc["temp"] = roomTemperature;
         doc["battery"] = batteryPercentage;
-        doc["icalUrl"] = secretIcalUrl.c_str();
-        doc["hasIcs"] = schedule.hasIcs();
-        doc["hasEvents"] = schedule.hasEvents();
-        doc["scheduleDay"] = schedule.getCurrentDayTitle().c_str();
 
         JsonObject pomoObj = doc["pomodoro"].to<JsonObject>();
         pomoObj["phase"]         = (int)pomodoro.getPhase();
@@ -348,6 +457,9 @@ int main() {
         doc["pomodoroFocus"] = pomodoro.getFocusMinutes();
         doc["pomodoroBreak"] = pomodoro.getShortBreakMinutes();
         doc["clockAnalog"] = clockAnalogView;
+        doc["sleepTimeoutMin"] = display.getSleepTimeoutMinutes();
+        doc["isSleeping"] = display.isSleeping();
+        doc["face4Maze"] = face4Maze;
         doc["mascotScene"] = mascotSceneIndex;
 
         std::string jsonStr;
@@ -370,14 +482,13 @@ int main() {
 
         JsonObject jsonObj = json.as<JsonObject>();
 
+        // Mirrors API.cpp: the hardware thread applies the rotation
         if (jsonObj["mode"].is<int>()) {
-            currentMode = (KubiMode)jsonObj["mode"].as<int>();
-            display.setRotationForFace((int)currentMode);
-        }
-
-        if (jsonObj["icalUrl"].is<const char*>()) {
-            secretIcalUrl = jsonObj["icalUrl"].as<const char*>();
-            schedule.setIcsUrl(secretIcalUrl);
+            int mode = jsonObj["mode"].as<int>();
+            if (mode >= MODE_CLOCK_IDLE && mode <= MODE_AMBIENT) {
+                currentMode = (KubiMode)mode;
+                display.requestWake();
+            }
         }
 
         int focus = pomodoro.getFocusMinutes();
@@ -418,9 +529,25 @@ int main() {
             prefs.end();
         }
 
-        if (jsonObj["mascotScene"].is<int>()) {
-            mascotSceneIndex = jsonObj["mascotScene"].as<int>() % 10;
-            if (mascotSceneIndex < 0) mascotSceneIndex += 10;
+        // Mirrors API.cpp
+        if (jsonObj["mascotScene"].is<int>() && ALL_KUBI_SCENE_COUNT > 0) {
+            mascotSceneIndex = wrapMascotScene(jsonObj["mascotScene"].as<int>());
+        }
+
+        if (jsonObj["face4Maze"].is<bool>()) {
+            face4Maze = jsonObj["face4Maze"].as<bool>();
+            Preferences prefs;
+            prefs.begin("kubi_settings", false);
+            prefs.putBool("face4Maze", face4Maze);
+            prefs.end();
+        }
+
+        if (jsonObj["sleepTimeoutMin"].is<int>()) {
+            display.setSleepTimeoutMinutes(jsonObj["sleepTimeoutMin"].as<int>());
+            Preferences prefs;
+            prefs.begin("kubi_settings", false);
+            prefs.putInt("sleepMin", display.getSleepTimeoutMinutes());
+            prefs.end();
         }
 
         res.set_content("{\"status\":\"success\"}", "application/json");
@@ -465,9 +592,10 @@ int main() {
         JsonObject jsonObj = json.as<JsonObject>();
 
         if (jsonObj["message"].is<const char*>()) {
-            screenOverrideText = jsonObj["message"].as<const char*>();
+            setOverrideText(jsonObj["message"].as<const char*>());
             isScreenOverrideActive = true;
-            std::cout << "[OVERRIDE] Alert received: " << screenOverrideText.c_str() << std::endl;
+            display.requestWake();
+            std::cout << "[OVERRIDE] Alert received: " << getOverrideText().c_str() << std::endl;
             res.set_content("{\"status\":\"alert_displayed\"}", "application/json");
         } else {
             res.status = 400;
@@ -498,32 +626,20 @@ int main() {
     });
 
     // -------------------------------------------------------------------------
-    // 6. Calendar Management Endpoints
+    // 6. POST /api/factory-reset (mirrors API.cpp)
     // -------------------------------------------------------------------------
-    svr.Post("/api/calendar/ics", [](const httplib::Request& req, httplib::Response& res) {
+    svr.Post("/api/factory-reset", [](const httplib::Request& req, httplib::Response& res) {
         addCors(res);
         JsonDocument json;
-        DeserializationError err = deserializeJson(json, req.body);
-        if (err || !json["ics"].is<const char*>()) {
+        deserializeJson(json, req.body);
+        const char* confirm = json["confirm"] | "";
+        if (strcmp(confirm, FACTORY_RESET_CONFIRM) == 0) {
+            factoryResetRequested = true;
+            res.set_content("{\"status\":\"resetting\"}", "application/json");
+        } else {
             res.status = 400;
-            res.set_content("{\"error\":\"invalid or missing ics\"}", "application/json");
-            return;
+            res.set_content("{\"error\":\"confirm required\"}", "application/json");
         }
-        schedule.setIcsContent(json["ics"].as<const char*>());
-        res.set_content("{\"status\":\"ics_saved\"}", "application/json");
-    });
-
-    svr.Post("/api/calendar/sample", [](const httplib::Request& req, httplib::Response& res) {
-        addCors(res);
-        schedule.loadSampleSchedule();
-        res.set_content("{\"status\":\"sample_loaded\"}", "application/json");
-    });
-
-    svr.Delete("/api/calendar", [](const httplib::Request& req, httplib::Response& res) {
-        addCors(res);
-        schedule.clearIcs();
-        secretIcalUrl = "";
-        res.set_content("{\"status\":\"calendar_cleared\"}", "application/json");
     });
 
     // -------------------------------------------------------------------------
@@ -557,18 +673,39 @@ int main() {
         // Quick Face Orientation Selection
         if (obj["face"].is<int>()) {
             int face = obj["face"].as<int>();
-            if (face >= 0 && face <= 3) {
-                if (face == 0) { sim_accel_x = 0.0f; sim_accel_y = 0.0f; sim_accel_z = 9.8f; }
-                else if (face == 1) { sim_accel_x = 9.8f; sim_accel_y = 0.0f; sim_accel_z = 0.0f; }
-                else if (face == 2) { sim_accel_x = 0.0f; sim_accel_y = 9.8f; sim_accel_z = 0.0f; }
-                else if (face == 3) { sim_accel_x = -9.8f; sim_accel_y = 0.0f; sim_accel_z = 0.0f; }
+            if (face >= 0 && face < FACE_COUNT) {
+                // Same table the firmware classifies with (FaceMap.h)
+                gravityForFace(face, sim_accel_x, sim_accel_y, sim_accel_z);
+                sim_tilt_roll = 0.0f;
+                sim_tilt_pitch = 0.0f;
 
-                currentMode = (KubiMode)face;
-                display.setRotationForFace(face);
-                clockShowDetails = false;
+                currentMode = (KubiMode)face; // rotation applied by the hardware thread
                 sim_injected_gesture = GESTURE_NONE;
                 sensors.getRecentGesture();
             }
+        }
+
+        // Continuous tilt (workbench tilt pad / arrow keys): degrees relative to
+        // the current face resting flat. The frame comes from FaceMap.h, the
+        // same one the maze steers with. Clamped well short of 45 degrees so
+        // tilting never reads as a different face.
+        if (obj["tiltRoll"].is<float>() || obj["tiltPitch"].is<float>()) {
+            if (obj["tiltRoll"].is<float>())  sim_tilt_roll  = obj["tiltRoll"].as<float>();
+            if (obj["tiltPitch"].is<float>()) sim_tilt_pitch = obj["tiltPitch"].as<float>();
+            if (sim_tilt_roll > 35.0f) sim_tilt_roll = 35.0f;
+            if (sim_tilt_roll < -35.0f) sim_tilt_roll = -35.0f;
+            if (sim_tilt_pitch > 35.0f) sim_tilt_pitch = 35.0f;
+            if (sim_tilt_pitch < -35.0f) sim_tilt_pitch = -35.0f;
+            KVec3 g = tiltedGravity((int)currentMode, sim_tilt_roll, sim_tilt_pitch);
+            sim_accel_x = g.x;
+            sim_accel_y = g.y;
+            sim_accel_z = g.z;
+        }
+
+        // Preview the first-connect address screen without a reset
+        if (obj["showAddress"].is<bool>()) {
+            addressScreenIp = "127.0.0.1";
+            addressScreenUntil = obj["showAddress"].as<bool>() ? millis() + ADDRESS_SCREEN_MS : 0;
         }
 
         // Gesture Triggers
@@ -586,8 +723,7 @@ int main() {
 
         // Mascot Idle Scene Selection
         if (obj["mascotScene"].is<int>()) {
-            mascotSceneIndex = obj["mascotScene"].as<int>() % 10;
-            if (mascotSceneIndex < 0) mascotSceneIndex += 10;
+            mascotSceneIndex = wrapMascotScene(obj["mascotScene"].as<int>());
             std::cout << "[SIM MASCOT] Injected scene index: " << mascotSceneIndex << std::endl;
         }
 
@@ -610,6 +746,8 @@ int main() {
         doc["accelX"] = sim_accel_x;
         doc["accelY"] = sim_accel_y;
         doc["accelZ"] = sim_accel_z;
+        doc["tiltRoll"] = sim_tilt_roll;
+        doc["tiltPitch"] = sim_tilt_pitch;
         doc["temp"] = sim_temperature;
         doc["battery"] = batteryPercentage;
         doc["rotation"] = sim_screen_rotation;
@@ -620,6 +758,22 @@ int main() {
         doc["mode"] = (int)currentMode;
         doc["isAnalog"] = clockAnalogView;
         doc["mascotScene"] = mascotSceneIndex;
+        doc["pixelWrites"] = sim_pixel_writes;
+        if (face4Maze) {
+            JsonObject m = doc["maze"].to<JsonObject>();
+            m["board"] = maze.boardIndex();
+            m["state"] = (int)maze.state();   // 0 ready, 1 running, 2 falling, 3 won
+            m["timeMs"] = maze.elapsedMs(millis());
+            m["bestMs"] = maze.bestMs();
+            m["x"] = maze.ballX();
+            m["y"] = maze.ballY();
+            m["playing"] = maze.isPlaying(millis());
+        }
+        doc["audioReady"] = audio.isReady();
+        if (const AudioOutputI2S* out = audio.getOutput()) {
+            doc["audioSamples"] = out->getSamplesWritten();
+            doc["audioUnderruns"] = out->getUnderruns();
+        }
 
         struct tm ti;
         if (getLocalTime(&ti)) {
@@ -637,5 +791,6 @@ int main() {
 
     sim_running = false;
     if (hwThread.joinable()) hwThread.join();
+    if (audioThread.joinable()) audioThread.join();
     return 0;
 }

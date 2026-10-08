@@ -2,9 +2,10 @@ import {
   Clock,
   Timer,
   Smile,
-  Calendar,
+  Sparkles,
   Activity,
   RefreshCw,
+  TriangleAlert,
   Wifi,
   Battery,
   Thermometer,
@@ -14,10 +15,9 @@ import {
   SkipForward,
   RotateCcw,
   Sliders,
+  Moon,
+  WifiOff,
   Palette,
-  Upload,
-  Trash2,
-  FileText,
 } from "lucide-react";
 import { Accordion } from "./components/Accordion";
 import {
@@ -56,19 +56,9 @@ interface KubiState {
   mode: number;
   temp: number;
   battery: number;
-  icalUrl: string;
-  hasIcs?: boolean;
-  hasEvents?: boolean;
-  scheduleDay?: string;
-  isNightMode: boolean;
-  planetDawnH: number;
-  planetDawnM: number;
-  planetDuskH: number;
-  planetDuskM: number;
-  alarmHour: number;
-  alarmMinute: number;
-  cfgSundownHour: number;
-  cfgSundownMinute: number;
+  sleepTimeoutMin?: number;
+  face4Maze?: boolean;
+  isSleeping?: boolean;
   pomodoro: PomodoroState;
   [key: string]: any;
 }
@@ -77,16 +67,6 @@ const DEFAULT_STATE: KubiState = {
   mode: 0,
   temp: 22.0,
   battery: 100,
-  icalUrl: "",
-  isNightMode: false,
-  planetDawnH: 6,
-  planetDawnM: 0,
-  planetDuskH: 18,
-  planetDuskM: 0,
-  alarmHour: 8,
-  alarmMinute: 0,
-  cfgSundownHour: 18,
-  cfgSundownMinute: 0,
   pomodoro: {
     phase: 0,
     phaseName: "FOCUS",
@@ -110,7 +90,18 @@ const FACE_MODES = [
   { id: 0, name: "Face 1: Focus Clock", desc: "Minimal digital & analog clock with date", icon: Clock },
   { id: 1, name: "Face 2: Pomodoro", desc: "Auto focus timer with 8-bit chimes", icon: Timer },
   { id: 2, name: "Face 3: Mascot & Temp", desc: "Kubi routine & room telemetry", icon: Smile },
-  { id: 3, name: "Face 4: Schedule", desc: "3-day Google Calendar agenda", icon: Calendar },
+  { id: 3, name: "Face 4: Ambient", desc: "Slow colour glow for a dark room", icon: Sparkles },
+];
+
+// Minutes of inactivity before the Mascot face turns its screen off (0 = never)
+const SLEEP_OPTIONS = [
+  { min: 0, label: "Never" },
+  { min: 1, label: "1 min" },
+  { min: 2, label: "2 min" },
+  { min: 5, label: "5 min" },
+  { min: 10, label: "10 min" },
+  { min: 15, label: "15 min" },
+  { min: 30, label: "30 min" },
 ];
 
 const PRESET_COLORS = [
@@ -134,30 +125,36 @@ function formatTime(totalSecs: number) {
 
 function KubiDashboard() {
   const qc = useQueryClient();
-  const [icalInput, setIcalInput] = useState("");
 
-  // 1. Fetch system state
-  const { data = DEFAULT_STATE, isLoading } = useQuery<KubiState>({
+  // 1. Fetch system state. Failures throw so the UI can show that Kubi is
+  // unreachable instead of rendering plausible-looking defaults.
+  const {
+    data: liveData,
+    isLoading,
+    isError,
+    dataUpdatedAt,
+    refetch,
+  } = useQuery<KubiState>({
     queryKey: ["kubiState"],
     queryFn: async () => {
-      try {
-        const res = await fetch("/api/state");
-        if (!res.ok) return DEFAULT_STATE;
-        const json = await res.json();
-        return {
-          ...DEFAULT_STATE,
-          ...json,
-          pomodoro: {
-            ...DEFAULT_STATE.pomodoro,
-            ...(json.pomodoro || {}),
-          },
-        };
-      } catch {
-        return DEFAULT_STATE;
-      }
+      const res = await fetch("/api/state");
+      if (!res.ok) throw new Error(`Kubi responded ${res.status}`);
+      const json = await res.json();
+      return {
+        ...DEFAULT_STATE,
+        ...json,
+        pomodoro: {
+          ...DEFAULT_STATE.pomodoro,
+          ...(json.pomodoro || {}),
+        },
+      };
     },
+    retry: 1,
     refetchInterval: 1000, // 1Hz live polling for smooth timer sync
   });
+  // Only ever real data past the connection gate below
+  const data = liveData ?? DEFAULT_STATE;
+  const isStale = isError && liveData !== undefined;
 
   // 2. Settings mutation
   const mutation = useMutation({
@@ -198,74 +195,30 @@ function KubiDashboard() {
     },
   });
 
-  const handleUploadIcs = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const text = reader.result as string;
-      try {
-        const res = await fetch("/api/calendar/ics", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ics: text }),
-        });
-        if (res.ok) {
-          qc.invalidateQueries({ queryKey: ["kubiState"] });
-          toast.success("ICS calendar uploaded & parsed!");
-        } else {
-          toast.error("Failed to parse ICS file");
-        }
-      } catch {
-        toast.error("Could not upload ICS file");
-      }
-    };
-    reader.readAsText(file);
-    e.target.value = "";
-  };
-
-  const handleLoadSample = async () => {
-    try {
-      const res = await fetch("/api/calendar/sample", { method: "POST" });
-      if (res.ok) {
-        qc.invalidateQueries({ queryKey: ["kubiState"] });
-        toast.success("Rich sample schedule loaded (>4 items, ticker)!");
-      }
-    } catch {
-      toast.error("Could not load sample schedule");
-    }
-  };
-
-  const handleClearCalendar = async () => {
-    try {
-      const res = await fetch("/api/calendar", { method: "DELETE" });
-      if (res.ok) {
-        setIcalInput("");
-        qc.invalidateQueries({ queryKey: ["kubiState"] });
-        toast.success("Calendar cleared ('No calendar connected, that's sad')");
-      }
-    } catch {
-      toast.error("Could not clear calendar");
-    }
-  };
-
-  const handleEmptyCalendar = async () => {
-    try {
-      const res = await fetch("/api/calendar/ics", {
+  const activeFace = FACE_MODES[data.mode] || FACE_MODES[0];
+  // 4. Factory reset (two-step: the button only arms the confirm panel)
+  const [resetArmed, setResetArmed] = useState(false);
+  const factoryResetMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/factory-reset", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ics: "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR" }),
+        body: JSON.stringify({ confirm: "ERASE" }),
       });
-      if (res.ok) {
-        qc.invalidateQueries({ queryKey: ["kubiState"] });
-        toast.success("Empty calendar set ('Nothing happening, I guess')");
-      }
-    } catch {
-      toast.error("Could not set empty calendar");
-    }
-  };
+      if (!res.ok) throw new Error("Reset refused");
+      return res.json();
+    },
+    onSuccess: () => {
+      setResetArmed(false);
+      toast.success("Kubi is erasing everything and restarting. Join the Kubi-Setup WiFi to set it up again.", {
+        duration: 15000,
+      });
+    },
+    onError: () => {
+      toast.error("Kubi did not accept the reset");
+    },
+  });
 
-  const activeFace = FACE_MODES[data.mode] || FACE_MODES[0];
   const pomo = data.pomodoro || DEFAULT_STATE.pomodoro;
 
   // Resolve current active color for Pomodoro
@@ -422,6 +375,43 @@ function KubiDashboard() {
         </div>
       ),
     },
+    // SCREEN SLEEP ITEM
+    {
+      headerContent: (
+        <div className="flex items-center gap-3 font-medium text-zinc-100">
+          <Moon size={18} className="text-amber-500" /> Screen Sleep
+        </div>
+      ),
+      bodyContent: (
+        <div className="space-y-4 text-sm">
+          <p className="text-xs text-zinc-500 leading-relaxed">
+            The Mascot face turns its screen off after this much stillness. Tap or move Kubi to wake it.
+            The Clock and Pomodoro faces stay on.
+          </p>
+          <div className="grid grid-cols-4 gap-2">
+            {SLEEP_OPTIONS.map((opt) => {
+              const isActive = (data.sleepTimeoutMin ?? 5) === opt.min;
+              return (
+                <button
+                  key={opt.min}
+                  onClick={() => mutation.mutate({ sleepTimeoutMin: opt.min })}
+                  className={`py-2 rounded-xl text-xs font-medium border transition-colors cursor-pointer ${
+                    isActive
+                      ? "bg-amber-500/10 border-amber-500/50 text-amber-500"
+                      : "bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+          {data.isSleeping && (
+            <p className="text-xs text-zinc-500">Kubi's screen is asleep right now.</p>
+          )}
+        </div>
+      ),
+    },
     // HARDWARE & TELEMETRY ITEM
     {
       headerContent: (
@@ -470,6 +460,52 @@ function KubiDashboard() {
         </div>
       ),
     },
+    // FACTORY RESET ITEM
+    {
+      headerContent: (
+        <div className="flex items-center gap-3 font-medium text-zinc-100">
+          <TriangleAlert size={18} className="text-rose-400" /> Factory Reset
+        </div>
+      ),
+      bodyContent: (
+        <div className="space-y-4 text-sm">
+          <p className="text-xs text-zinc-500 leading-relaxed">
+            Erases every saved WiFi network and all settings (Pomodoro, clock style, screen sleep), then
+            restarts Kubi into setup mode as if it were new.
+          </p>
+          {!resetArmed ? (
+            <button
+              onClick={() => setResetArmed(true)}
+              className="w-full py-2.5 rounded-xl text-xs font-medium bg-zinc-950 hover:bg-rose-500/10 text-rose-400 border border-zinc-800 hover:border-rose-500/40 transition-colors cursor-pointer"
+            >
+              Factory reset...
+            </button>
+          ) : (
+            <div className="space-y-3 p-4 rounded-2xl bg-rose-500/5 border border-rose-500/30">
+              <p className="text-xs text-rose-200 leading-relaxed">
+                This can't be undone. Kubi will disconnect from this WiFi. To use it again, join the{" "}
+                <span className="font-mono">Kubi-Setup</span> network and pick a WiFi.
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => setResetArmed(false)}
+                  className="py-2.5 rounded-xl text-xs font-medium bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-700 transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => factoryResetMutation.mutate()}
+                  disabled={factoryResetMutation.isPending}
+                  className="py-2.5 rounded-xl text-xs font-semibold bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/50 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  {factoryResetMutation.isPending ? "Erasing..." : "Erase everything"}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      ),
+    },
   ];
 
   if (isLoading) {
@@ -480,9 +516,43 @@ function KubiDashboard() {
     );
   }
 
+  if (liveData === undefined) {
+    // Never reached the cube: show that plainly rather than fake values
+    return (
+      <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center p-6 font-montserrat">
+        <div className="max-w-sm text-center space-y-4">
+          <WifiOff size={32} className="mx-auto text-amber-500" />
+          <h1 className="text-lg font-medium">Can't reach Kubi</h1>
+          <p className="text-sm text-zinc-500 leading-relaxed">
+            Make sure Kubi is switched on and this device is on the same WiFi network, then open{" "}
+            <span className="font-mono text-zinc-300">http://kubi.local</span>.
+          </p>
+          <button
+            onClick={() => refetch()}
+            className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-amber-500 border border-amber-500/30 rounded-xl text-xs font-medium transition-colors cursor-pointer"
+          >
+            Try again
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 p-6 pb-24 font-montserrat">
-      <div className="max-w-md mx-auto space-y-6">
+      {isStale && (
+        <div className="sticky top-0 z-10 -mx-6 -mt-6 mb-6 px-6 py-3 bg-rose-500/10 border-b border-rose-500/30 text-rose-300 text-xs flex items-center justify-center gap-2">
+          <WifiOff size={14} />
+          Lost connection to Kubi. Showing the last state from{" "}
+          {new Date(dataUpdatedAt).toLocaleTimeString()}.
+        </div>
+      )}
+      <div
+        className={`max-w-md mx-auto space-y-6 transition-opacity ${
+          isStale ? "opacity-50 pointer-events-none select-none" : ""
+        }`}
+        aria-disabled={isStale}
+      >
         {/* 3D WIREFRAME SPINNING CUBE */}
         <SpinningCube />
 
@@ -661,103 +731,47 @@ function KubiDashboard() {
               );
             })}
           </div>
-        </section>
 
-        {/* 2. GOOGLE CALENDAR ICAL SYNC */}
-        <section className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-xl space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Calendar size={18} className="text-pink-400" />
-              <h2 className="text-lg font-medium text-zinc-100">Google Calendar Sync</h2>
-            </div>
-            {!data.hasIcs ? (
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono bg-zinc-800 text-zinc-400 border border-zinc-700">
-                No calendar connected, that's sad
-              </span>
-            ) : !data.hasEvents ? (
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono bg-amber-500/10 text-amber-400 border border-amber-500/30">
-                Nothing happening, I guess
-              </span>
-            ) : (
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono bg-pink-500/10 text-pink-400 border border-pink-500/30 font-semibold">
-                {data.scheduleDay || "Schedule Active"}
-              </span>
-            )}
-          </div>
-          <p className="text-zinc-500 text-xs leading-relaxed">
-            Paste your private iCal (.ics) link or upload a local .ics file. Kubi displays up to 5 days of events with marquee ticker animations for long items.
-          </p>
-          <div className="space-y-2">
-            <div className="flex gap-2">
-              <input
-                type="text"
-                placeholder="https://calendar.google.com/calendar/ical/.../basic.ics"
-                value={icalInput || data.icalUrl}
-                onChange={(e) => setIcalInput(e.target.value)}
-                className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-xs text-zinc-200 placeholder-zinc-700 focus:outline-none focus:border-pink-500/50"
-              />
-              <button
-                onClick={() => {
-                  mutation.mutate({ icalUrl: icalInput });
-                  toast.success("Calendar URL saved");
-                }}
-                className="px-5 py-2.5 bg-pink-500/10 hover:bg-pink-500/20 text-pink-400 border border-pink-500/30 rounded-xl text-xs font-semibold transition-colors cursor-pointer shrink-0"
-              >
-                Save URL
-              </button>
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
-              <label className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 text-xs font-medium cursor-pointer transition-colors">
-                <Upload size={13} className="text-pink-400" />
-                <span>Upload .ics</span>
-                <input type="file" accept=".ics,text/calendar" onChange={handleUploadIcs} className="hidden" />
-              </label>
-
-              <button
-                type="button"
-                onClick={handleLoadSample}
-                className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 text-xs font-medium transition-colors cursor-pointer"
-                title="Loads a rich test schedule with >4 items today and long ticker titles"
-              >
-                <FileText size={13} className="text-amber-400" />
-                <span>Load Sample</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleEmptyCalendar}
-                className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 text-xs font-medium transition-colors cursor-pointer"
-                title="Sets an empty calendar to test 'Nothing happening, I guess'"
-              >
-                <span>Empty Cal</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleClearCalendar}
-                className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-800/80 hover:bg-rose-500/20 text-zinc-400 hover:text-rose-400 border border-zinc-700 hover:border-rose-500/30 text-xs font-medium transition-colors cursor-pointer"
-                title="Clears all calendar data to test 'No calendar connected, that's sad'"
-              >
-                <Trash2 size={13} />
-                <span>Clear ICS</span>
-              </button>
+          {/* Face 4 content: Ambient (default) or the tilt maze */}
+          <div className="flex items-center justify-between pt-2 border-t border-zinc-800/80">
+            <span className="text-xs text-zinc-400">Face 4 shows</span>
+            <div className="flex rounded-xl border border-zinc-800 overflow-hidden text-xs font-medium">
+              {[
+                { maze: false, label: "Ambient" },
+                { maze: true, label: "Maze (beta)" },
+              ].map((opt) => (
+                <button
+                  key={opt.label}
+                  onClick={() => mutation.mutate({ face4Maze: opt.maze })}
+                  className={`px-3 py-1.5 cursor-pointer transition-colors ${
+                    !!data.face4Maze === opt.maze
+                      ? "bg-amber-500/15 text-amber-500"
+                      : "bg-zinc-950/60 text-zinc-500 hover:text-zinc-300"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
             </div>
           </div>
         </section>
 
-        {/* 3. ACCORDION (POMODORO SETTINGS + HARDWARE TELEMETRY) */}
+        {/* 2. ACCORDION (POMODORO, SLEEP, HARDWARE TELEMETRY) */}
         <div className="pt-2">
           <Accordion items={accordionItems} />
         </div>
 
-        {/* 4. MANUAL & SIMULATOR LINKS */}
+        {/* 3. MANUAL & SIMULATOR LINKS */}
         <div className="pt-12 flex items-center justify-center gap-6">
-          <Link to="/sim" className="text-amber-500 hover:text-amber-400 text-xs font-semibold tracking-widest uppercase transition-colors flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-            Launch Virtual Hardware Workbench
-          </Link>
-          <span className="text-zinc-700">•</span>
+          {__KUBI_SIM__ && (
+            <>
+              <Link to="/sim" className="text-amber-500 hover:text-amber-400 text-xs font-semibold tracking-widest uppercase transition-colors flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                Launch Virtual Hardware Workbench
+              </Link>
+              <span className="text-zinc-700">•</span>
+            </>
+          )}
           <Link to="/manual" className="text-zinc-400 hover:text-amber-500 text-xs underline tracking-widest uppercase transition-colors">
             Kubi User Manual &amp; Gestures Guide
           </Link>

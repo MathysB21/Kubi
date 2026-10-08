@@ -5,15 +5,15 @@
 #include <LittleFS.h>
 #include <WiFi.h>
 #include "PomodoroManager.h"
-#include "ScheduleManager.h"
+#include "DisplayManager.h"
+#include "KubiScenes.h"
 
 // --- SHARED GLOBALS (Defined in main.cpp) ---
 extern volatile KubiMode currentMode;
 extern volatile float roomTemperature;
 extern volatile int batteryPercentage;
-extern String secretIcalUrl;
 extern volatile bool isScreenOverrideActive;
-extern String screenOverrideText;
+extern volatile bool factoryResetRequested;
 extern bool clockAnalogView;
 extern int mascotSceneIndex;
 
@@ -36,10 +36,6 @@ void setupAPIRoutes(AsyncWebServer& server) {
         doc["mode"] = (int)currentMode;
         doc["temp"] = roomTemperature;
         doc["battery"] = batteryPercentage;
-        doc["icalUrl"] = secretIcalUrl;
-        doc["hasIcs"] = schedule.hasIcs();
-        doc["hasEvents"] = schedule.hasEvents();
-        doc["scheduleDay"] = schedule.getCurrentDayTitle();
         doc["mascotScene"] = mascotSceneIndex;
 
         // Detailed Pomodoro State
@@ -64,6 +60,9 @@ void setupAPIRoutes(AsyncWebServer& server) {
         doc["pomodoroFocus"] = pomodoro.getFocusMinutes();
         doc["pomodoroBreak"] = pomodoro.getShortBreakMinutes();
         doc["clockAnalog"] = clockAnalogView;
+        doc["sleepTimeoutMin"] = display.getSleepTimeoutMinutes();
+        doc["isSleeping"] = display.isSleeping();
+        doc["face4Maze"] = face4Maze;
 
         serializeJson(doc, *response);
         request->send(response);
@@ -71,24 +70,20 @@ void setupAPIRoutes(AsyncWebServer& server) {
 
     // =========================================================================
     // 2. POST /api/settings
-    // React sends user configuration changes (Pomodoro, iCal URL, routines)
+    // React sends user configuration changes (face, Pomodoro, clock, sleep)
     // =========================================================================
     AsyncCallbackJsonWebHandler* settingsHandler = new AsyncCallbackJsonWebHandler("/api/settings", [](AsyncWebServerRequest *request, JsonVariant &json) {
         JsonObject jsonObj = json.as<JsonObject>();
 
         // 1. Mode Change
+        // The core-1 loop applies the matching screen rotation; never touch the
+        // TFT from this (AsyncTCP) task.
         if (jsonObj["mode"].is<int>()) {
-            currentMode = (KubiMode)jsonObj["mode"].as<int>();
-        }
-
-        // 2. Calendar Sync URL
-        if (jsonObj["icalUrl"].is<const char*>()) {
-            secretIcalUrl = jsonObj["icalUrl"].as<String>();
-            Preferences prefs;
-            prefs.begin("kubi_settings", false);
-            prefs.putString("icalUrl", secretIcalUrl);
-            prefs.end();
-            schedule.setIcsUrl(secretIcalUrl);
+            int mode = jsonObj["mode"].as<int>();
+            if (mode >= MODE_CLOCK_IDLE && mode <= MODE_AMBIENT) {
+                currentMode = (KubiMode)mode;
+                display.requestWake();
+            }
         }
 
         // 3. Pomodoro Durations
@@ -131,9 +126,30 @@ void setupAPIRoutes(AsyncWebServer& server) {
             prefs.end();
         }
 
-        if (jsonObj["mascotScene"].is<int>()) {
-            mascotSceneIndex = jsonObj["mascotScene"].as<int>() % 10;
-            if (mascotSceneIndex < 0) mascotSceneIndex += 10;
+        // Mascot diorama scene. Like face4Maze, the hardware loop sees the
+        // change and repaints; nothing here touches the display.
+        if (jsonObj["mascotScene"].is<int>() && ALL_KUBI_SCENE_COUNT > 0) {
+            int n = (int)ALL_KUBI_SCENE_COUNT;
+            mascotSceneIndex = ((jsonObj["mascotScene"].as<int>() % n) + n) % n;
+        }
+
+        // Face 4: Ambient (false) or Maze (true). The hardware loop notices the
+        // change and switches scenes; nothing here touches the display.
+        if (jsonObj["face4Maze"].is<bool>()) {
+            face4Maze = jsonObj["face4Maze"].as<bool>();
+            Preferences prefs;
+            prefs.begin("kubi_settings", false);
+            prefs.putBool("face4Maze", face4Maze);
+            prefs.end();
+        }
+
+        // 5. Screen sleep timeout (minutes, 0 = never)
+        if (jsonObj["sleepTimeoutMin"].is<int>()) {
+            display.setSleepTimeoutMinutes(jsonObj["sleepTimeoutMin"].as<int>());
+            Preferences prefs;
+            prefs.begin("kubi_settings", false);
+            prefs.putInt("sleepMin", display.getSleepTimeoutMinutes());
+            prefs.end();
         }
 
         request->send(200, "application/json", "{\"status\":\"success\"}");
@@ -174,9 +190,10 @@ void setupAPIRoutes(AsyncWebServer& server) {
         JsonObject jsonObj = json.as<JsonObject>();
 
         if (jsonObj["message"].is<const char*>()) {
-            screenOverrideText = jsonObj["message"].as<String>();
-            isScreenOverrideActive = true;
-            Serial.printf("[OVERRIDE] Custom alert received: %s\n", screenOverrideText.c_str());
+            setOverrideText(jsonObj["message"].as<const char*>());
+            isScreenOverrideActive = true; // Set after the text so the reader never sees a stale banner
+            display.requestWake();
+            Serial.printf("[OVERRIDE] Custom alert received: %s\n", getOverrideText().c_str());
             request->send(200, "application/json", "{\"status\":\"alert_displayed\"}");
         } else {
             request->send(400, "application/json", "{\"error\":\"missing message field\"}");
@@ -207,34 +224,35 @@ void setupAPIRoutes(AsyncWebServer& server) {
     });
 
     // =========================================================================
-    // 6. CALENDAR API ROUTES
+    // 6. POST /api/factory-reset
+    // Wipes settings, saved networks and stored WiFi, then restarts into setup.
+    // Requires {"confirm":"ERASE"} so a stray request cannot trigger it.
     // =========================================================================
-    AsyncCallbackJsonWebHandler* calendarUploadHandler = new AsyncCallbackJsonWebHandler("/api/calendar/ics", [](AsyncWebServerRequest *request, JsonVariant &json) {
+    AsyncCallbackJsonWebHandler* resetHandler = new AsyncCallbackJsonWebHandler("/api/factory-reset", [](AsyncWebServerRequest *request, JsonVariant &json) {
         JsonObject jsonObj = json.as<JsonObject>();
-        if (jsonObj["ics"].is<const char*>()) {
-            String icsData = jsonObj["ics"].as<String>();
-            schedule.setIcsContent(icsData);
-            request->send(200, "application/json", "{\"status\":\"ics_saved\"}");
+        const char* confirm = jsonObj["confirm"] | "";
+        if (strcmp(confirm, FACTORY_RESET_CONFIRM) == 0) {
+            factoryResetRequested = true; // hardware loop does the wipe after we reply
+            request->send(200, "application/json", "{\"status\":\"resetting\"}");
         } else {
-            request->send(400, "application/json", "{\"error\":\"missing ics field\"}");
+            request->send(400, "application/json", "{\"error\":\"confirm required\"}");
         }
     });
-    server.addHandler(calendarUploadHandler);
-
-    server.on("/api/calendar/sample", HTTP_POST, [](AsyncWebServerRequest *request) {
-        schedule.loadSampleSchedule();
-        request->send(200, "application/json", "{\"status\":\"sample_loaded\"}");
-    });
-
-    server.on("/api/calendar", HTTP_DELETE, [](AsyncWebServerRequest *request) {
-        schedule.clearIcs();
-        secretIcalUrl = "";
-        request->send(200, "application/json", "{\"status\":\"calendar_cleared\"}");
-    });
+    server.addHandler(resetHandler);
 
     // =========================================================================
-    // 7. SERVE STATIC REACT FRONTEND FROM LITTLEFS
-    // Default file: index.html
+    // 7. SERVE STATIC REACT FRONTEND FROM LITTLEFS /www
+    // Only the web build lives under /www (Vite outDir firmware/data/www), so
+    // nothing else on the filesystem is reachable over HTTP.
     // =========================================================================
-    server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
+    server.serveStatic("/", LittleFS, "/www/").setDefaultFile("index.html");
+
+    // Client-side routes (/manual) have no file: hand them the SPA shell.
+    server.onNotFound([](AsyncWebServerRequest *request) {
+        if (request->method() == HTTP_GET && !request->url().startsWith("/api/")) {
+            request->send(LittleFS, "/www/index.html", "text/html");
+        } else {
+            request->send(404, "application/json", "{\"error\":\"not found\"}");
+        }
+    });
 }

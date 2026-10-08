@@ -45,6 +45,9 @@
 
 extern uint16_t sim_framebuffer[240 * 320];
 extern uint8_t sim_screen_rotation;
+// Pixels pushed to the panel since boot. On hardware each one is 16 bits of
+// SPI at 40 MHz, so this approximates bus load (see /sim/state pixelWrites).
+extern uint64_t sim_pixel_writes;
 
 class TFT_eSPI {
 public:
@@ -52,6 +55,7 @@ public:
     uint8_t _textDatum;
     uint16_t _textColor;
     uint16_t _textBgColor;
+    uint16_t _textPadding;
     bool _invert;
 
     TFT_eSPI()
@@ -59,6 +63,7 @@ public:
           _textDatum(TL_DATUM),
           _textColor(TFT_WHITE),
           _textBgColor(TFT_BLACK),
+          _textPadding(0),
           _invert(false) {}
 
     void init() {
@@ -88,9 +93,18 @@ public:
         _textDatum = datum;
     }
 
+    // Like TFT_eSPI: fg == bg means transparent text. With fg != bg the
+    // glyph cells (and any padding) are painted in bg, which is what lets
+    // firmware overdraw changing text without clearing the screen first.
     void setTextColor(uint16_t fg, uint16_t bg = TFT_BLACK) {
         _textColor = fg;
         _textBgColor = bg;
+    }
+
+    // Like TFT_eSPI: drawString() blanks out to this width (px) around the
+    // text, aligned by datum, so a shorter string erases a longer one.
+    void setTextPadding(uint16_t px) {
+        _textPadding = px;
     }
 
     // Direct pixel write into 240x320 panel buffer
@@ -116,6 +130,7 @@ public:
 
         if (px >= 0 && px < 240 && py >= 0 && py < 320) {
             sim_framebuffer[py * 240 + px] = color;
+            sim_pixel_writes++;
         }
     }
 
@@ -123,6 +138,7 @@ public:
         for (int i = 0; i < 240 * 320; i++) {
             sim_framebuffer[i] = color;
         }
+        sim_pixel_writes += 240 * 320;
     }
 
     void drawFastHLine(int32_t x, int32_t y, int32_t w, uint16_t color) {
@@ -260,6 +276,7 @@ public:
 private:
     void drawCircleHelper(int32_t x0, int32_t y0, int32_t r, uint8_t cornername, uint16_t color);
     void fillCircleHelper(int32_t x0, int32_t y0, int32_t r, uint8_t cornername, int32_t delta, uint16_t color);
+    void fillTextBackground(int32_t sx, int32_t sy, int32_t w, int32_t h);
     void draw7SegDigit(int32_t x, int32_t y, char digit, int32_t w, int32_t h, int32_t thick, uint16_t color);
     void drawChar(int32_t x, int32_t y, char c, uint16_t fg, uint16_t bg, uint8_t size);
 };
