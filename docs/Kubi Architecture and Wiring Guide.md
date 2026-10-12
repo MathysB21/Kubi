@@ -242,8 +242,9 @@ Columns 1-20 run along the 60 mm side, rows A-N along the 40 mm side. Component 
 - Male headers can be made up from short pieces placed end to end.
 - Row N, d (columns 1-8): male header for the screen cable, in the cable's order VCC, GND, DIN, CLK, CS, DC, RST, BL (check the labels on your cable).
 - Row N, i (columns 10-13): 4-way female header the IMU board plugs into upright, so it is held rigidly. Order assumed VCC, GND, SDA, SCL; match your IMU board.
-- Row N, a (columns 15-17): male header to the PAM8403 input: L, R, G.
-- Columns 19-20: male headers. 5i / Gi = 5 V and GND in from the MT3608. 5a / Ga = 5 V and GND out to the PAM8403 power pins. Bt = battery sense in, the wire from R1.
+- Row N, a (columns 15-17): solder points for the wires to the PAM8403 input: L, R, G.
+- Columns 19-20: solder points. 5i / Gi = 5 V and GND in from the MT3608. 5a / Ga = 5 V and GND out to the PAM8403 power pins. Bt = battery sense in, the wire from R1.
+- Power, amp and battery-sense wires are soldered straight into these holes rather than plugged onto header pins: a cube that gets rolled and knocked shakes plugs loose. Only the screen cable (it has its own plug) and the IMU (in its socket) stay removable.
 - Under the ESP32 (rows C-J, the space between the sockets): R2 (and C1 if fitted) lying flat, next to the D34 socket pin. Only flat parts here: the ESP32 sits ~10 mm above the board.
 
 Wires on the solder side (tick off while soldering):
@@ -274,7 +275,7 @@ Off-board wiring:
 | PAM8403 rout + / - | right speaker | never to GND |
 | Screen cable | perfboard N1-N8 | |
 
-Parts: two 15-way female headers, one 4-way female header, male header pieces, R1 and R2, hook-up wire (26 AWG stranded throughout; stranded also survives a cube being rolled and knocked better than solid core). C1 (100 nF ceramic) is optional: with 10 kΩ resistors the divider is stiff enough for the ADC, and the firmware averages many readings.
+Parts: two 15-way female headers, one 4-way female header, 8 male header pins (for the screen cable), R1 and R2, hook-up wire (26 AWG stranded throughout; stranded also survives a cube being rolled and knocked better than solid core). C1 (100 nF ceramic) is optional: with 10 kΩ resistors the divider is stiff enough for the ADC, and the firmware averages many readings.
 
 After assembly, the sensor's position relative to the screen has changed from the breadboard, so rerun firmware/tools/capture_faces.ps1 and update FaceMap.h (TSK-768).
 
