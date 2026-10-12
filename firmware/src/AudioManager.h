@@ -39,6 +39,7 @@ public:
     bool isPlaying() const { return getActiveChime() != CHIME_NONE; }
     KubiChime getActiveChime() const;
     void setVolume(float gain); // 0.0 to 1.0
+    float getVolume() const { return _gain; }
     const AudioOutputI2S* getOutput() const { return _i2sOut; }
 
 private:

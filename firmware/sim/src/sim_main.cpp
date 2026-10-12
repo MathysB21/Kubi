@@ -406,6 +406,7 @@ int main() {
     clockAnalogView = prefs.getBool("clockAnalog", false);
     face4Maze = prefs.getBool("face4Maze", false);
     display.setSleepTimeoutMinutes(prefs.getInt("sleepMin", 5));
+    audio.setVolume(prefs.getInt("volume", 25) / 100.0f);
     prefs.end();
 
     display.init();
@@ -461,6 +462,7 @@ int main() {
         doc["isSleeping"] = display.isSleeping();
         doc["face4Maze"] = face4Maze;
         doc["mascotScene"] = mascotSceneIndex;
+        doc["volume"] = (int)lroundf(audio.getVolume() * 100.0f);
 
         std::string jsonStr;
         serializeJson(doc, jsonStr);
@@ -548,6 +550,21 @@ int main() {
             prefs.begin("kubi_settings", false);
             prefs.putInt("sleepMin", display.getSleepTimeoutMinutes());
             prefs.end();
+        }
+
+        // Mirrors API.cpp: volume 0-100 %, confirmed with a tap chime
+        if (jsonObj["volume"].is<int>()) {
+            int v = jsonObj["volume"].as<int>();
+            if (v < 0) v = 0;
+            if (v > 100) v = 100;
+            audio.setVolume(v / 100.0f);
+            Preferences prefs;
+            prefs.begin("kubi_settings", false);
+            prefs.putInt("volume", v);
+            prefs.end();
+            audio.playChime(CHIME_TAP_FEEDBACK);
+            sim_last_chime_name = "CHIME_TAP_FEEDBACK";
+            sim_last_chime_time = millis();
         }
 
         res.set_content("{\"status\":\"success\"}", "application/json");

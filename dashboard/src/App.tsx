@@ -18,6 +18,8 @@ import {
   Moon,
   WifiOff,
   Palette,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 import { Accordion } from "./components/Accordion";
 import {
@@ -28,7 +30,7 @@ import {
   QueryClientProvider,
 } from "@tanstack/react-query";
 import { Toaster, toast } from "sonner";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { SpinningCube } from "./components/SpinningCube";
 import { Link } from "react-router";
 
@@ -57,6 +59,7 @@ interface KubiState {
   temp: number;
   battery: number;
   sleepTimeoutMin?: number;
+  volume?: number; // chime volume, 0-100
   face4Maze?: boolean;
   isSleeping?: boolean;
   pomodoro: PomodoroState;
@@ -155,6 +158,14 @@ function KubiDashboard() {
   // Only ever real data past the connection gate below
   const data = liveData ?? DEFAULT_STATE;
   const isStale = isError && liveData !== undefined;
+
+  // Volume slider: shows the dragged value until Kubi reports it back, and
+  // only sends on release so the confirmation chime plays once per change.
+  const [volumeDraft, setVolumeDraft] = useState<number | null>(null);
+  const volume = volumeDraft ?? data.volume ?? 25;
+  useEffect(() => {
+    if (volumeDraft !== null && data.volume === volumeDraft) setVolumeDraft(null);
+  }, [data.volume, volumeDraft]);
 
   // 2. Settings mutation
   const mutation = useMutation({
@@ -409,6 +420,43 @@ function KubiDashboard() {
           {data.isSleeping && (
             <p className="text-xs text-zinc-500">Kubi's screen is asleep right now.</p>
           )}
+        </div>
+      ),
+    },
+    // SOUND ITEM
+    {
+      headerContent: (
+        <div className="flex items-center gap-3 font-medium text-zinc-100">
+          <Volume2 size={18} className="text-amber-500" /> Sound
+        </div>
+      ),
+      bodyContent: (
+        <div className="space-y-4 text-sm">
+          <p className="text-xs text-zinc-500 leading-relaxed">
+            Volume of Kubi's chimes. Kubi plays a short chime at the new level when you let go.
+          </p>
+          <div className="flex items-center gap-3">
+            {volume === 0 ? (
+              <VolumeX size={16} className="text-zinc-500 shrink-0" />
+            ) : (
+              <Volume2 size={16} className="text-amber-500 shrink-0" />
+            )}
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={5}
+              value={volume}
+              aria-label="Chime volume"
+              onChange={(e) => setVolumeDraft(Number(e.target.value))}
+              onPointerUp={() => volumeDraft !== null && mutation.mutate({ volume: volumeDraft })}
+              onKeyUp={() => volumeDraft !== null && mutation.mutate({ volume: volumeDraft })}
+              className="flex-1 accent-amber-500 cursor-pointer"
+            />
+            <span className="font-mono text-xs text-zinc-300 w-10 text-right">
+              {volume === 0 ? "Off" : `${volume}%`}
+            </span>
+          </div>
         </div>
       ),
     },

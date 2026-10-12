@@ -6,6 +6,7 @@
 #include <WiFi.h>
 #include "PomodoroManager.h"
 #include "DisplayManager.h"
+#include "AudioManager.h"
 #include "KubiScenes.h"
 
 // --- SHARED GLOBALS (Defined in main.cpp) ---
@@ -62,6 +63,7 @@ void setupAPIRoutes(AsyncWebServer& server) {
         doc["clockAnalog"] = clockAnalogView;
         doc["sleepTimeoutMin"] = display.getSleepTimeoutMinutes();
         doc["isSleeping"] = display.isSleeping();
+        doc["volume"] = (int)lroundf(audio.getVolume() * 100.0f);
         doc["face4Maze"] = face4Maze;
 
         serializeJson(doc, *response);
@@ -141,6 +143,18 @@ void setupAPIRoutes(AsyncWebServer& server) {
             prefs.begin("kubi_settings", false);
             prefs.putBool("face4Maze", face4Maze);
             prefs.end();
+        }
+
+        // Chime volume, 0-100 %. A tap chime confirms the new level, so the
+        // dashboard slider can be set by ear (playChime is safe from any task).
+        if (jsonObj["volume"].is<int>()) {
+            int v = constrain(jsonObj["volume"].as<int>(), 0, 100);
+            audio.setVolume(v / 100.0f);
+            Preferences prefs;
+            prefs.begin("kubi_settings", false);
+            prefs.putInt("volume", v);
+            prefs.end();
+            audio.playChime(CHIME_TAP_FEEDBACK);
         }
 
         // 5. Screen sleep timeout (minutes, 0 = never)

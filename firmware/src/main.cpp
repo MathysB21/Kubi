@@ -645,6 +645,7 @@ void setup() {
   clockAnalogView = preferences.getBool("clockAnalog", false);
   face4Maze       = preferences.getBool("face4Maze", false);
   display.setSleepTimeoutMinutes(preferences.getInt("sleepMin", 5));
+  audio.setVolume(preferences.getInt("volume", 25) / 100.0f); // dashboard "Sound"
   bool firstConnect = preferences.getBool("showAddr", false);
   if (firstConnect) preferences.remove("showAddr");
   // Retired with the calendar face (TSK-422): drop leftovers from older firmware

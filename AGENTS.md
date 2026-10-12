@@ -27,8 +27,8 @@ powershell -ExecutionPolicy Bypass -File firmware/sim/run_sim.ps1
   - `GET /sim/frame`: Streams raw 240×320 RGBA pixel buffer from the C++ framebuffer.
   - `POST /sim/inject`: Injects virtual face changes (`{"face": 1}`), gestures (`{"gesture": "tap"|"shake"|"slam"}`), continuous tilt (`{"tiltRoll": deg, "tiltPitch": deg}`, relative to the current face resting flat), the first-connect screen (`{"showAddress": true}`), the Face 3 scene (`{"mascotScene": n}`), temp, battery, accel.
   - `GET /sim/state`: Telemetry heartbeat (orientation, backlight PWM, chime events, active face, tilt, `audioSamples`/`audioUnderruns`, `pixelWrites`, and `maze` when Face 4 is the maze).
-  - `GET /api/state`: Standard Kubi firmware REST state (incl. `sleepTimeoutMin`, `isSleeping`, `face4Maze`, `mascotScene`).
-  - `POST /api/settings`: Updates Pomodoro intervals/colours, clock style, `sleepTimeoutMin`, `face4Maze`, `mascotScene`, face.
+  - `GET /api/state`: Standard Kubi firmware REST state (incl. `sleepTimeoutMin`, `isSleeping`, `face4Maze`, `mascotScene`, `volume` 0-100).
+  - `POST /api/settings`: Updates Pomodoro intervals/colours, clock style, `sleepTimeoutMin`, `face4Maze`, `mascotScene`, `volume` (0-100, NVS `volume`, plays a tap chime to confirm), face.
   - `POST /api/override`: Triggers the companion "Secret Override" broadcast message.
   - `POST /api/factory-reset`: `{"confirm":"ERASE"}` wipes settings + WiFi and restarts into setup (the sim replays onboarding instead of rebooting).
 
