@@ -173,7 +173,7 @@ Audio is synthesized on the ESP32 and played through its built-in DAC into a PAM
 With `KUBI_AUDIO_INTERNAL_DAC` removed from `platformio.ini`, audio goes over I2S to a MAX98357A instead: `BCLK` GPIO 26, `LRC` GPIO 25, `DIN` GPIO 27.
 
 ### Power Supply & Flash Partitions
-* **Battery Subsystem**: 3× 18650 Li-ion cells wired in parallel (~10,000mAh total) managed by an IP5328P / IP5306 module providing pass-through USB-C charging and multi-day battery life.
+* **Battery Subsystem**: 2× INR18650-26E cells in parallel (5,200 mAh), charged over USB-C by a protected TP4056 board and boosted to 5 V by an MT3608. Roughly 15-25 hours per charge; layout and wiring in `docs/Kubi Architecture and Wiring Guide.md`.
 * **Custom Partition Table (`firmware/partitions.csv`)**:
   - `app0` / `app1`: **1.5 MB** each (two slots so WiFi/OTA updates write the idle one)
   - `spiffs` (LittleFS): **896 KB** (companion web dashboard and static assets)
