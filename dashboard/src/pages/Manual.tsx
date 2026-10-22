@@ -43,21 +43,13 @@ function Manual() {
               <li><strong>Face 1 Up (Focus Clock):</strong> Clean time and date display. Shake to toggle between digital and analog clock view.</li>
               <li><strong>Face 2 Up (Pomodoro Timer):</strong> Rotates display upright and starts your configured focus/break timer with 8-bit chimes.</li>
               <li><strong>Face 3 Up (Mascot &amp; Environment):</strong> Room temperature from the internal sensor and animated Kubi daily routines.</li>
-              <li><strong>Face 4 Up (Schedule &amp; Agenda):</strong> Upcoming 3-day schedule summary synced from Google Calendar.</li>
+              <li><strong>Face 4 Up (Ambient Glow):</strong> A dim, slowly breathing pixel glow that drifts through night colours, made for a dark room. Tap to move on to the next colour. This face never sleeps.</li>
             </ul>
           </div>
         </section>
 
         <section className="space-y-4 border-t border-zinc-800 pt-6">
-          <h2 className="text-xl font-semibold text-amber-500">4. Google Calendar Integration</h2>
-          <p className="text-zinc-400">
-            To synchronize your agenda, paste your private/secret Google Calendar iCal (.ics) URL into the Kubi Web
-            Dashboard. Kubi downloads and updates your agenda automatically in the background.
-          </p>
-        </section>
-
-        <section className="space-y-4 border-t border-zinc-800 pt-6">
-          <h2 className="text-xl font-semibold text-amber-500">5. Power &amp; Battery Care</h2>
+          <h2 className="text-xl font-semibold text-amber-500">4. Power &amp; Battery Care</h2>
           <p className="text-zinc-400">
             Powered by high-capacity 18650 lithium cells with pass-through USB-C power management. Kubi can run
             unplugged for days or remain plugged in safely on your desk.

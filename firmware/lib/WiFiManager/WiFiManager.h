@@ -315,6 +315,9 @@ class WiFiManager
     //called when saving params-in-wifi or params before anything else happens (eg wifi)
     void          setPreSaveConfigCallback( std::function<void()> func );
 
+    // Kubi: called on save when the password is blank; return the stored one or ""
+    void          setSavedPasswordResolver( std::function<String(const String&)> func );
+
     //called when saving params before anything else happens
     void          setPreSaveParamsCallback( std::function<void()> func );
 
@@ -831,6 +834,7 @@ protected:
     std::function<void()> _webservercallback;
     std::function<void()> _savewificallback;
     std::function<void()> _presavewificallback;
+    std::function<String(const String&)> _savedpasswordresolver;
     std::function<void()> _presaveparamscallback;
     std::function<void()> _saveparamscallback;
     std::function<void()> _resetcallback;
