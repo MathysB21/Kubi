@@ -228,6 +228,7 @@ Columns 1-20 run along the 60 mm side, rows A-N along the 40 mm side. Component 
    F    .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  Bt .
    G    .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
    H    .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
+   I    .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
    J    .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
    K    S  S  S  S  S  S  S  S  S  S  S  S  S  S  S  .  .  .  .  .    S = ESP32 socket, side with D23 ... 3V3
    L    .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .

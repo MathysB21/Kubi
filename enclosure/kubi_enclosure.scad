@@ -15,7 +15,7 @@
 // Units: mm. Everything below the parameter blocks derives from them.
 
 /* [Render] */
-part = "assembly"; // [assembly, exploded, front, back, midplate, side]
+part = "assembly"; // [assembly, exploded, front, back, midplate, side, front_asm, back_asm, midplate_asm, side_asm]
 $fn = 48;
 
 /* [Cube] */
@@ -71,10 +71,12 @@ screw_pilot = 2.6;  // M3 self-tapping into PETG
 screw_clear = 3.4;
 screw_head = 6;     // countersunk M3 head
 corner_c = 36;      // back-plate screws, from the cube centre
-pb_hole_dx = 55;    // perfboard mounting-hole spacing: MEASURE (40 x 60 board)
-pb_hole_dy = 35;
-pb_pilot = 1.8;     // M2 self-tapping
+pb_hole_dx = 56;    // perfboard mounting holes, nominal (2 mm in from each corner of the 60 x 40 board)
+pb_hole_dy = 36;
+pb_pilot = 0;       // 0 = solid 7 mm pads: the board's holes are imprecise, so glue it, or
+                    //     mark through its holes and drill 1.6 mm for M2 screws. 1.8 = pre-drilled.
 pb_stand = 4;
+pb_pad = 7;
 
 H = S / 2;
 
@@ -228,14 +230,14 @@ module midplate() {
             translate([0, 0, mid_z]) linear_extrude(mid_t) rrect(mid_size, mid_size, 4);
             // perfboard standoffs on the back
             each_corner() translate([pb_hole_dx / 2, pb_hole_dy / 2, mid_z + mid_t])
-                cylinder(d = 5, h = pb_stand);
+                cylinder(d = pb_pad, h = pb_stand);
         }
         // screws into the legs, countersunk on the battery side
         each_corner() translate([leg_xy, leg_xy, mid_z - 0.01]) {
             cylinder(d = screw_clear, h = mid_t + 1);
             cylinder(d1 = screw_head, d2 = screw_clear, h = 1.8);
         }
-        each_corner() translate([pb_hole_dx / 2, pb_hole_dy / 2, mid_z + mid_t - 0.01])
+        if (pb_pilot > 0) each_corner() translate([pb_hole_dx / 2, pb_hole_dy / 2, mid_z + mid_t - 0.01])
             cylinder(d = pb_pilot, h = pb_stand + 0.02);
         // two zip-tie straps around the battery holder (41 mm tall, centred)
         for (sx = [-1, 1], sy = [-1, 1])
@@ -282,3 +284,8 @@ else if (part == "front") front_body();
 else if (part == "back") translate([0, 0, S]) rotate([180, 0, 0]) back_body();
 else if (part == "midplate") translate([0, 0, -mid_z]) midplate();
 else if (part == "side") side_panel();
+// Assembled positions, for the 3D build viewer (build-viewer/): not for printing
+else if (part == "front_asm") front_body();
+else if (part == "back_asm") back_body();
+else if (part == "midplate_asm") midplate();
+else if (part == "side_asm") side_panel_placed();

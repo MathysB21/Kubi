@@ -19,7 +19,7 @@ These are parameters at the top of the file, set to sensible defaults:
 
 - `mag_d`, `mag_h`: your magnets. The pockets add `mag_fit` (0.3 mm) to the diameter for a press fit; glue them anyway.
 - `view_dx`, `view_dy`: where the screen's visible area sits on its PCB. Measure the visible area's centre against the PCB's centre with the module as it sits on Face 1 (portrait, cable plug at the back). Without this the window can be off-centre on the picture.
-- `pb_hole_dx`, `pb_hole_dy`: the perfboard's mounting-hole spacing (centre to centre). If it has no holes, glue it to the standoffs.
+- Perfboard: its 2 mm corner holes are imprecise, so the mid-plate has solid 7 mm pads (`pb_pilot = 0`) instead of fixed screw holes. Either glue the board to the pads, or hold it in place, mark through its holes, drill 1.6 mm and use M2 screws.
 - Optional: `spk_x`, `scr_y`, `usb_x`, `usb_y` to move things.
 
 ## Print settings (PETG)
@@ -32,7 +32,7 @@ These are parameters at the top of the file, set to sensible defaults:
 ## Hardware
 
 - 8 x M3 x 10 countersunk screws: 4 hold the back on (into the posts), 4 hold the mid-plate onto the legs. They self-tap into the 2.6 mm pilot holes.
-- 4 x M2 x 5 screws for the perfboard, or glue.
+- 4 x M2 x 5 screws for the perfboard (drill the pads to 1.6 mm first), or glue.
 - 2 zip ties up to 4 mm wide, around the battery holder.
 - 32 magnets: 4 per panel plus 4 in the frame behind each panel. With fewer, use two per panel on opposite corners.
 - Superglue or epoxy for the magnets, hot glue for the TP4056 and loose wires.
