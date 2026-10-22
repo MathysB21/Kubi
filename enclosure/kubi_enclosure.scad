@@ -284,7 +284,7 @@ else if (part == "front") front_body();
 else if (part == "back") translate([0, 0, S]) rotate([180, 0, 0]) back_body();
 else if (part == "midplate") translate([0, 0, -mid_z]) midplate();
 else if (part == "side") side_panel();
-// Assembled positions, for the 3D build viewer (build-viewer/): not for printing
+// Assembled positions, for the 3D build viewer (viewer/): not for printing
 else if (part == "front_asm") front_body();
 else if (part == "back_asm") back_body();
 else if (part == "midplate_asm") midplate();
