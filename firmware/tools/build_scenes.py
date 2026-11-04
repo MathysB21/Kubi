@@ -12,7 +12,12 @@ import os
 import glob
 import re
 from pathlib import Path
-from PIL import Image
+
+# Without Pillow, skip regeneration and build with the committed KubiScenes.*.
+try:
+    from PIL import Image
+except ImportError:
+    Image = None
 
 try:
     SCRIPT_DIR = Path(__file__).resolve().parent
@@ -41,6 +46,9 @@ def sanitize_name(name):
     return clean
 
 def build():
+    if Image is None:
+        print("[SCENE_BUILDER] Warning: Pillow is not installed, using the committed scenes. Run 'pip install pillow' to regenerate them.")
+        return
     if not SCALED_DIR.exists():
         print(f"[SCENE_BUILDER] Error: {SCALED_DIR} does not exist!")
         return

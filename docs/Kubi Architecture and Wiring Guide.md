@@ -124,27 +124,21 @@ I2C Clock (ADXL345 + BMP280)
 
 GPIO 25
 
-Audio (I2S)
+Audio (DAC)
 
-LRC / WSEL
+PAM8403 input L
 
-Word Select (Left/Right Clock)
+Left channel, analog from the ESP32's built-in DAC
 
 GPIO 26
 
-Audio (I2S)
+Audio (DAC)
 
-BCLK
+PAM8403 input R
 
-Bit Clock
+Right channel, analog
 
-GPIO 27
-
-Audio (I2S)
-
-DIN
-
-Data In to Amplifier
+(No MAX98357A was in stock, so audio uses the ESP32's own DAC into a PAM8403 analog amp, build flag KUBI_AUDIO_INTERNAL_DAC in platformio.ini. With a MAX98357A instead, remove the flag and wire I2S: LRC to GPIO 25, BCLK to GPIO 26, DIN to GPIO 27.)
 
 3. Physical Wiring Strategy (The Protoboard Shield)
 
@@ -152,13 +146,26 @@ To make this durable and fit inside the 10cm³ wooden cube, you will build a "sh
 
 Step 1: The Power Rail
 
-Take the 5V output from your power bank module and solder it to a trace on the edge of the protoboard. This is your Main 5V Rail.
+Power chain (decided 12 Oct; the DFRobot DFR0969 board is 104 mm long and only fits a cube of ~120 mm, so it is not used):
+
+  2 x INR18650-26E in a bare holder, wired in PARALLEL (reads ~3.7 V, not 7.4 V)
+    -> TP4056 USB-C charger board, protected version (B+ / B- to the cells, OUT+ / OUT- to the load; its USB-C is the cube's charging port)
+    -> MT3608 boost board, set to 5.0 V
+    -> perfboard 5V / GND
+
+Set the MT3608 to 5.0-5.1 V with a multimeter BEFORE anything is connected to its output: these boards often ship set to 12 V or more, which kills the ESP32 and the amp instantly. Turn the brass trimmer while measuring OUT+ to OUT-, powered from the cells.
+
+The TP4056's own over-discharge cut-off is 2.5 V, which is deep for an 18650; the firmware will shut down at ~3.3 V using the battery-sense divider (Step 4). Use two identical cells from the same batch at the same charge.
+
+Not fitted yet: a power switch (slide switch in the TP4056 OUT+ to MT3608 IN+ wire, so the cube can be turned off while it still charges), and load sharing (P-MOSFET + Schottky + 100k, so the cube runs from USB while plugged in instead of holding the cells at 4.2 V). Leave a spot on the back wall for the switch.
+
+The MT3608 output is your Main 5V Rail.
 
 Create a Common Ground (GND) Rail next to it.
 
 Solder the female headers for the ESP32 onto the board. Connect the ESP32's VIN to the 5V rail, and GND to the GND rail.
 
-Create a 3.3V Rail on the board, fed only by the ESP32's 3V3 pin.
+Create a 3.3V Rail on the board, fed only by the ESP32's 3V3 pin. Never also feed it from the holder's 3.3V output: two regulators on one rail fight.
 
 Step 2: The Display (SPI)
 
@@ -174,11 +181,104 @@ Step 3: The Brains & Brawn (IMU & Audio)
 
 The IMU: Connect the SEN0140's VCC to the 3.3V Rail and GND to the GND Rail. Connect SDA (GPIO 21) and SCL (GPIO 22). Because both the accelerometer and barometer share the I2C bus, you only need these 4 wires!
 
-The Audio Amp: Connect the MAX98357A's VIN directly to the Main 5V Rail (not the 3.3V rail). It needs 5V to push the full 3 Watts to the speaker. Connect GND to the GND Rail.
+The Audio Amp (PAM8403): Connect "power +" directly to the Main 5V Rail (not the 3.3V rail) and "power -" to the GND Rail.
 
-Wire the I2S pins: LRC to GPIO 25, BCLK to GPIO 26, and DIN to GPIO 27.
+Wire the inputs: L to GPIO 25, R to GPIO 26, and G to the GND Rail.
 
-Connect the two speaker wires to the screw terminals on the MAX98357A.
+Speakers: one speaker on "lout +" / "lout -", the other on "rout +" / "rout -". Never connect a speaker wire to GND: both outputs are driven (bridge-tied load). The volume knob sits in front of the amp; start low, the ESP32's DAC is louder than the I2S path was tuned for.
+
+Step 4: Battery Sense (for the battery percentage)
+
+The holder does not report its charge, so the ESP32 measures the cell voltage itself through a divider that halves it (4.2 V full becomes 2.1 V, inside the ADC's range):
+
+- R1, 10 kΩ, from the cells' + terminal (the bare holder's + lead, both cells share it) to a sense node.
+- R2, 10 kΩ, from the sense node to GND.
+- C1, 100 nF ceramic, from the sense node to GND next to the ESP32 pin: optional. 10 kΩ is low enough for the ADC to sample on its own; the capacitor only steadies it further. (100 kΩ would draw less but needs the capacitor.)
+- Sense node to GPIO 34 (an ADC1 pin, which keeps working while WiFi is on; ADC2 pins do not; input-only, which is all this needs).
+
+Solder R1 directly onto the holder's + lead (or its solder tab), so the wire that runs to the perfboard is already behind 10 kΩ: if that wire ever chafes through to GND, at most 0.4 mA flows. A bare wire from battery + across the cube would be an unfused short waiting to happen. The divider draws about 0.2 mA (4 mAh a day), negligible next to the cube's ~150 mA.
+
+Until this is wired, GPIO 34 floats and the firmware keeps reporting 100%; the reading code is added once the divider exists (TSK-391).
+
+4. Cube Layout (90 mm, printed plastic, 3 mm walls, 84 mm inside)
+
+The cube rolls around the front-to-back axis: the screen is on the front face, the charging port on the back face, and the four faces it rests on are around them. Directions below are with the cube on Face 1 (Clock), screen towards you.
+
+| Zone (depth from the front wall) | What sits there |
+|---|---|
+| Front wall | Screen window centred. One laptop speaker either side of the screen, firing forward through grille holes (60 x 15 mm each; the side bands are ~24 mm wide). The front face never rests on the desk, so the speakers are never muffled; in landscape faces they end up above and below the screen. |
+| 0-12 mm | Screen module (58 x 35 mm, portrait) and its 8-wire plug. Keep using the plug and cable: no header pins needed on the screen. |
+| ~14-35 mm | Battery holder (78 x 41 x 21 mm), 78 mm side to side, lying flat behind the screen and centred, so the heaviest part sits on the roll axis and the cube rolls evenly. |
+| ~40-60 mm | Perfboard with the ESP32 and the IMU, parallel to the back wall, screwed or glued to bosses. The IMU must not be able to move relative to the screen. |
+| Back wall, inside | TP4056 (USB-C through a slot in the back wall), MT3608 (37 x 17 x 14 mm), PAM8403 with its volume knob kept inside (the sides are removable, so it is set once, behind a panel). Vent slots near the TP4056: it dissipates ~1.3 W while charging at 1 A. Room reserved for a future power switch. |
+
+Route the screen cable around the battery holder (there is ~21 mm above and below it). Keep wires away from the ESP32's antenna end.
+
+5. Perfboard (40 x 60 mm, 14 x 20 holes)
+
+Columns 1-20 run along the 60 mm side, rows A-N along the 40 mm side. Component side, viewed from above:
+
+```
+        1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20
+   A    .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
+   B    S  S  S  S  S  S  S  S  S  S  S  S  S  S  S  .  .  .  5i Gi    S = ESP32 socket, side with EN ... VIN
+   C    .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
+   D    .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  5a Ga
+   E    .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
+   F    .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  Bt .
+   G    .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
+   H    .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
+   I    .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
+   J    .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
+   K    S  S  S  S  S  S  S  S  S  S  S  S  S  S  S  .  .  .  .  .    S = ESP32 socket, side with D23 ... 3V3
+   L    .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
+   M    .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
+   N    d  d  d  d  d  d  d  d  .  i  i  i  i  .  a  a  a  .  .  .
+```
+
+- ESP32: two 15-way female headers (cut down from longer strips), pins in columns 1-15, antenna end at column 1 hanging off the board edge, USB-C end towards column 15. Rows B and K: this board's two pin rows are 9 holes (22.9 mm) apart, measured. The ESP32's PCB overhangs to about column 18 at the USB end, so nothing tall goes in columns 16-18.
+- Socket pin order, column 1 to 15, confirmed against the pinout of the board in use (30-pin ESP32 DevKit, ESP32-D0WD-V3 module, CH340 USB-C):
+  - Row B: EN, VP (GPIO36), VN (GPIO39), D34, D35, D32, D33, D25 (DAC1), D26 (DAC2), D27, D14, D12, D13, GND, VIN
+  - Row K: D23 (MOSI), D22 (SCL), TX0, RX0, D21 (SDA), D19, D18 (SCK), D5, TX2, RX2, D4, D2, D15, GND, 3V3
+- Male headers can be made up from short pieces placed end to end.
+- Row N, d (columns 1-8): male header for the screen cable, in the cable's order VCC, GND, DIN, CLK, CS, DC, RST, BL (check the labels on your cable).
+- Row N, i (columns 10-13): 4-way female header the IMU board plugs into upright, so it is held rigidly. Order assumed VCC, GND, SDA, SCL; match your IMU board.
+- Row N, a (columns 15-17): solder points for the wires to the PAM8403 input: L, R, G.
+- Columns 19-20: solder points. 5i / Gi = 5 V and GND in from the MT3608. 5a / Ga = 5 V and GND out to the PAM8403 power pins. Bt = battery sense in, the wire from R1.
+- Power, amp and battery-sense wires are soldered straight into these holes rather than plugged onto header pins: a cube that gets rolled and knocked shakes plugs loose. Only the screen cable (it has its own plug) and the IMU (in its socket) stay removable.
+- Under the ESP32 (rows C-J, the space between the sockets): R2 (and C1 if fitted) lying flat, next to the D34 socket pin. Only flat parts here: the ESP32 sits ~10 mm above the board.
+
+Wires on the solder side (tick off while soldering):
+
+| From | To | Note |
+|---|---|---|
+| B15 VIN | B19 5i, D19 5a | 5 V |
+| B14 GND, K14 GND | B20 Gi, D20 Ga, N2, N11, N17, R2, C1 | one common ground |
+| K15 3V3 | N1 (screen VCC), N10 (IMU VCC) | the only source on the 3.3 V rail |
+| K1 D23 / K7 D18 | N3 DIN / N4 CLK | SPI |
+| K8 D5 / K12 D2 / K11 D4 | N5 CS / N6 DC / N7 RST | GPIO 2 is a boot pin: hold BOOT if a USB flash fails |
+| B6 D32 | N8 BL | backlight PWM |
+| K5 D21 / K2 D22 | N12 SDA / N13 SCL | I2C: ADXL345 0x53, BMP280 0x77 |
+| B8 D25 / B9 D26 | N15 L / N16 R | DAC audio |
+| B4 D34 | F19 Bt, R2 to GND, C1 to GND | battery sense node |
+
+Off-board wiring:
+
+| From | To | Note |
+|---|---|---|
+| Holder + / - | TP4056 B+ / B- | keep short; 26 AWG stranded is fine at these currents (up to 1 A while charging) |
+| Holder + | R1 at the holder, then a wire to perfboard F19 | R1 at the battery end |
+| TP4056 OUT+ / OUT- | MT3608 IN+ / IN- | power switch goes in the OUT+ wire later |
+| MT3608 OUT+ / OUT- | perfboard B19 / B20 | set to 5.0 V first |
+| Perfboard D19 / D20 | PAM8403 power + / - | |
+| Perfboard N15 / N16 / N17 | PAM8403 input L / R / G | |
+| PAM8403 lout + / - | left speaker | never to GND |
+| PAM8403 rout + / - | right speaker | never to GND |
+| Screen cable | perfboard N1-N8 | |
+
+Parts: two 15-way female headers, one 4-way female header, 8 male header pins (for the screen cable), R1 and R2, hook-up wire (26 AWG stranded throughout; stranded also survives a cube being rolled and knocked better than solid core). C1 (100 nF ceramic) is optional: with 10 kΩ resistors the divider is stiff enough for the ADC, and the firmware averages many readings.
+
+After assembly, the sensor's position relative to the screen has changed from the breadboard, so rerun firmware/tools/capture_faces.ps1 and update FaceMap.h (TSK-768).
 
 Assembly Tip for Resilience
 
