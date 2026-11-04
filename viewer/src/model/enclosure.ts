@@ -1,10 +1,6 @@
 // Printed parts. The STLs are exported from kubi_enclosure.scad in their
 // assembled positions (part = *_asm), so they need no placement here.
-import frontUrl from "../../../enclosure/stl/assembly/front.stl?url";
-import backUrl from "../../../enclosure/stl/assembly/back.stl?url";
-import midUrl from "../../../enclosure/stl/assembly/midplate.stl?url";
-import sideUrl from "../../../enclosure/stl/assembly/side.stl?url";
-
+// enclosure/stl/assembly is Vite's public directory: see vite.config.ts.
 export interface EnclosurePart {
   id: "front" | "midplate" | "back" | "side";
   name: string;
@@ -20,7 +16,7 @@ export const ENCLOSURE_PARTS: EnclosurePart[] = [
   {
     id: "front",
     name: "Front body",
-    url: frontUrl,
+    url: "/front.stl",
     color: "#d9d2c3",
     layer: 0,
     count: 1,
@@ -35,7 +31,7 @@ export const ENCLOSURE_PARTS: EnclosurePart[] = [
   {
     id: "midplate",
     name: "Mid-plate",
-    url: midUrl,
+    url: "/midplate.stl",
     color: "#8f897d",
     layer: 0.6,
     count: 1,
@@ -50,7 +46,7 @@ export const ENCLOSURE_PARTS: EnclosurePart[] = [
   {
     id: "back",
     name: "Back",
-    url: backUrl,
+    url: "/back.stl",
     color: "#c8c0ae",
     layer: 1.5,
     count: 1,
@@ -65,7 +61,7 @@ export const ENCLOSURE_PARTS: EnclosurePart[] = [
   {
     id: "side",
     name: "Side panels",
-    url: sideUrl,
+    url: "/side.stl",
     color: "#ebe5d6",
     layer: 0,
     count: 4,
