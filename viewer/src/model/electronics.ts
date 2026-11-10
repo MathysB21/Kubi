@@ -24,10 +24,11 @@ const box = (min: Vec3, max: Vec3, color: string, metal = false): Shape => ({ ki
 const cyl = (center: Vec3, r: number, len: number, axis: "x" | "y" | "z", color: string, metal = false): Shape =>
   ({ kind: "cyl", center, r, len, axis, color, metal });
 
-const rowB = holeY("B");
-const rowK = holeY("K");
-const rowN = holeY("N");
+const row2 = holeY(2); // ESP32 socket, EN ... VIN
+const row12 = holeY(12); // ESP32 socket, D23 ... 3V3
+const row14 = holeY(14); // screen header and IMU socket
 const PT = PERF.z1; // perfboard top surface
+const IMU_Z = PT + 11; // the flat IMU's PCB: socket 8.5 mm + header spacer 2.5 mm
 
 export const COMPONENTS: Component[] = [
   {
@@ -43,7 +44,7 @@ export const COMPONENTS: Component[] = [
     label: [0, 33, 6],
     size: "PCB 58 x 35 mm, glass 48 x 35, visible area 40.8 x 30.6",
     where: "Behind the front window, portrait, held by the four corner brackets. Glass centred on the PCB.",
-    connections: ["8-wire cable from its plug to perfboard N1-N8 (VCC, GND, DIN, CLK, CS, DC, RST, BL)"],
+    connections: ["8-wire cable from its plug to perfboard A14-H14 (VCC, GND, DIN, CLK, CS, DC, RST, BL; VCC is purple)"],
     notes: ["Plug position on the back of the PCB is approximate in this view.", "Hot glue at the brackets once it sits square in the window."],
   },
   {
@@ -79,7 +80,7 @@ export const COMPONENTS: Component[] = [
     where: "Strapped to the front of the mid-plate with two zip ties, centred on the roll axis so the cube rolls evenly.",
     connections: [
       "+ lead to TP4056 B+, - lead to TP4056 B-",
-      "R1 (10 kohm) soldered onto the + lead at the holder, then a wire to perfboard F19 (battery sense)",
+      "R1 (10 kohm) soldered onto the free + tab at the holder, then a wire to perfboard S6 (battery sense)",
     ],
     notes: ["Wired in parallel: both cells in, about 3.7 V across the leads (not 7.4 V).", "Cells out whenever you solder on the power side."],
   },
@@ -89,21 +90,23 @@ export const COMPONENTS: Component[] = [
     layer: 0.85,
     shapes: [
       box([PERF.x0, PERF.y0, PERF.z0], [PERF.x1, PERF.y1, PERF.z1], "#b08a52"),
-      box([holeX(1) - 1.27, rowB - 1.27, PT], [holeX(15) + 1.27, rowB + 1.27, PT + 8.5], "#111"),
-      box([holeX(1) - 1.27, rowK - 1.27, PT], [holeX(15) + 1.27, rowK + 1.27, PT + 8.5], "#111"),
-      box([holeX(1) - 1.27, rowN - 1.27, PT], [holeX(8) + 1.27, rowN + 1.27, PT + 2.5], "#111"),
-      box([holeX(1) - 0.4, rowN - 0.32, PT + 2.5], [holeX(8) + 0.4, rowN + 0.32, PT + 8.5], "#d4a017", true),
-      box([holeX(10) - 1.27, rowN - 1.27, PT], [holeX(13) + 1.27, rowN + 1.27, PT + 8.5], "#111"),
-      cyl([holeX(4), (holeY("C") + holeY("G")) / 2, PT + 1.2], 1.2, 6.5, "y", "#d6b88a"),
+      box([holeX(1) - 1.27, row2 - 1.27, PT], [holeX(15) + 1.27, row2 + 1.27, PT + 8.5], "#111"),
+      box([holeX(1) - 1.27, row12 - 1.27, PT], [holeX(15) + 1.27, row12 + 1.27, PT + 8.5], "#111"),
+      box([holeX(1) - 1.27, row14 - 1.27, PT], [holeX(8) + 1.27, row14 + 1.27, PT + 2.5], "#111"),
+      box([holeX(1) - 0.4, row14 - 0.32, PT + 2.5], [holeX(8) + 0.4, row14 + 0.32, PT + 8.5], "#d4a017", true),
+      box([holeX(10) - 1.27, row14 - 1.27, PT], [holeX(13) + 1.27, row14 + 1.27, PT + 8.5], "#111"),
+      cyl([holeX(4), (holeY(3) + holeY(7)) / 2, PT + 1.2], 1.2, 6.5, "y", "#d6b88a"),
     ],
     label: [0, -26, 47],
     size: "60 x 40 x 1.6 mm",
-    where: "On the four pads at the back of the mid-plate, component side facing the back plate.",
+    where:
+      "On the four pads at the back of the mid-plate, component side facing the back plate, row 14 (screen and IMU headers) towards the top, away from the TP4056.",
     connections: [
-      "ESP32 sockets: rows B and K, columns 1-15",
-      "Screen cable header N1-N8, IMU socket N10-N13",
-      "Amp input pigtails N15-N17, power pigtails B19/B20, amp power D19/D20, battery sense F19",
-      "R2 (10 kohm) flat from C4 to G4, C4 bridged to B4",
+      "Holes are named by the board's printed coordinates: column A-T, row 1-14",
+      "ESP32 sockets: A2-O2 and A12-O12",
+      "Screen cable header A14-H14, IMU socket J14-M14",
+      "Amp input pigtails O14-Q14, power pigtails S2/T2, amp power S4/T4, battery sense S6",
+      "R2 (10 kohm) flat from D3 to D7, its D3 leg bent over to D2",
     ],
     notes: ["Only flat parts under the ESP32: it sits ~10 mm above the board.", "See the Perfboard view for every hole and wire."],
   },
@@ -112,14 +115,14 @@ export const COMPONENTS: Component[] = [
     name: "ESP32 DevKit (30-pin, CH340, USB-C)",
     layer: 1.0,
     shapes: [
-      box([-33.1, -11.46, PT + 8.5], [17.9, 16.54, PT + 10.1], "#111827"),
-      box([-32.6, -6.46, PT + 10.1], [-26.6, 11.54, PT + 11.1], "#1f2937"),
-      box([-26.6, -6.46, PT + 10.1], [-7.1, 11.54, PT + 13.3], "#c7c7cc", true),
-      box([13.5, -1.96, PT + 10.1], [18.3, 7.04, PT + 13.3], "#c7c7cc", true),
+      box([-33.1, -15.27, PT + 8.5], [17.9, 12.73, PT + 10.1], "#111827"),
+      box([-32.6, -10.27, PT + 10.1], [-26.6, 7.73, PT + 11.1], "#1f2937"),
+      box([-26.6, -10.27, PT + 10.1], [-7.1, 7.73, PT + 13.3], "#c7c7cc", true),
+      box([13.5, -5.77, PT + 10.1], [18.3, 3.23, PT + 13.3], "#c7c7cc", true),
     ],
-    label: [-8, 2.5, 62],
-    size: "51 x 28 mm, pin rows 9 holes (22.9 mm) apart",
-    where: "Plugged into the two sockets, antenna end (EN / D23) at column 1, overhanging the board edge.",
+    label: [-8, -1.3, 62],
+    size: "51 x 28 mm, pin rows 10 holes (25.4 mm) apart",
+    where: "Plugged into the two sockets, chip up, antenna end (EN / D23) at column A, overhanging the board edge. EN ... VIN in row 2.",
     connections: [
       "SPI to screen: D23 DIN, D18 CLK, D5 CS, D2 DC, D4 RST, D32 BL",
       "I2C to IMU: D21 SDA, D22 SCL",
@@ -131,17 +134,22 @@ export const COMPONENTS: Component[] = [
   },
   {
     id: "imu",
-    name: "IMU board (ADXL345 + BMP280)",
+    name: "IMU board (DFRobot 10DOF V2: ADXL345 + BMP280)",
     layer: 1.0,
     shapes: [
-      box([-5.2, rowN - 0.8, PT + 8.5], [12.8, rowN + 0.8, PT + 34.5], "#2563eb"),
-      box([0, rowN + 0.8, PT + 20], [5, rowN + 1.8, PT + 25], "#111"),
+      box([holeX(10) - 1.27, row14 - 1.27, PT + 8.5], [holeX(13) + 1.27, row14 + 1.27, IMU_Z], "#111"),
+      box([-6.46, row14 - 2, IMU_Z], [11.54, row14 + 26, IMU_Z + 1.6], "#2563eb"),
+      box([0, row14 + 12, IMU_Z + 1.6], [5, row14 + 17, IMU_Z + 2.6], "#111"),
     ],
-    label: [4, -22, 76],
-    size: "~26 x 18 mm, standing upright",
-    where: "Plugged into the 4-way socket N10-N13 so it is held rigidly: it decides which face is up.",
-    connections: ["VCC N10 (3.3 V), GND N11, SDA N12 (D21), SCL N13 (D22)", "ADXL345 at 0x53, BMP280 at 0x77"],
-    notes: ["After assembly, rerun firmware/tools/capture_faces.ps1: its position relative to the screen changed."],
+    label: [2.5, 34, 62],
+    size: "26 mm from its pins to the far edge, lying flat",
+    where:
+      "Flat in the 4-way socket J14-M14 (its pins are straight), VIN on M14, its body overhanging the perfboard's row-14 edge towards the top panel. It must not be able to move: it decides which face is up.",
+    connections: ["SDA J14 (D21), SCL K14 (D22), GND L14, VIN M14 (3.3 V)", "ADXL345 at 0x53, BMP280 at 0x77"],
+    notes: [
+      "Its far edge reaches about 0.5 mm past a side panel's inner face: every panel has two 2 mm pockets on its inside for it.",
+      "After assembly, rerun firmware/tools/capture_faces.ps1: its position relative to the screen changed.",
+    ],
   },
   {
     id: "tp4056",
@@ -170,8 +178,10 @@ export const COMPONENTS: Component[] = [
     label: [0, 40, 80],
     size: "37 x 17 x 14 mm",
     where: "Flat on the inside of the back plate, above the perfboard.",
-    connections: ["IN+ / IN- from TP4056 OUT+ / OUT-", "OUT+ / OUT- to perfboard B19 (5V in) / B20 (GND in)"],
-    notes: ["Measure and set to 5.0-5.1 V before anything is connected to its output."],
+    connections: ["IN+ / IN- from TP4056 OUT+ / OUT-", "OUT+ / OUT- to perfboard S2 (5V in) / T2 (GND in)"],
+    notes: [
+      "Set to 5.0-5.1 V before anything is connected to its output, with the meter connected the whole time and half a turn at a time. Never above 5.5 V.",
+    ],
   },
   {
     id: "pam8403",
@@ -185,10 +195,10 @@ export const COMPONENTS: Component[] = [
     ],
     label: [-19, 8, 68],
     size: "~22 x 20 mm, knob ~20 mm tall",
-    where: "Flat on the back plate, off-centre: its knob must not sit over the upright IMU.",
+    where: "Flat on the back plate, off-centre: its knob must stay clear of the ESP32 and the IMU.",
     connections: [
-      "power + / - from perfboard D19 / D20",
-      "input L / R / G from perfboard N15 / N16 / N17",
+      "power + / - from perfboard S4 / T4",
+      "input L / R / G from perfboard O14 / P14 / Q14",
       "lout + / - to the left speaker, rout + / - to the right",
     ],
     notes: ["Set the knob once so 100 % on the dashboard's Sound slider is the loudest you want."],
@@ -251,9 +261,9 @@ export const WIRES_3D: Wire3D[] = [
   },
   {
     id: "sense",
-    label: "R1 at the battery + to F19 (battery sense)",
+    label: "R1 at the battery + to S6 (battery sense)",
     color: NET_COLORS.sense,
-    points: [w(38.5, -6, 27, 0.45), w(36, -25, 39.5, 0.6), w(28, 3.8, 40.8, 0.85), { p: holePos("F19", PERF.z0), layer: 0.85 }],
+    points: [w(38.5, -6, 27, 0.45), w(36, -10, 39.5, 0.6), w(28, -3.8, 40.8, 0.85), { p: holePos("S6", PERF.z0), layer: 0.85 }],
   },
   {
     id: "tp-out-plus",
@@ -269,37 +279,37 @@ export const WIRES_3D: Wire3D[] = [
   },
   {
     id: "mt-out-plus",
-    label: "MT3608 OUT+ to B19 (5V in)",
+    label: "MT3608 OUT+ to S2 (5V in)",
     color: NET_COLORS.v5,
-    points: [w(17, 34, 85.4, 1.35), w(26, 22, 70, 1.1), { p: holePos("B19", PERF.z1), layer: 0.85 }],
+    points: [w(17, 34, 85.4, 1.35), w(33, 22, 70, 1.1), w(33, -14, 50, 0.9), { p: holePos("S2", PERF.z1), layer: 0.85 }],
   },
   {
     id: "mt-out-minus",
-    label: "MT3608 OUT- to B20 (GND in)",
+    label: "MT3608 OUT- to T2 (GND in)",
     color: NET_COLORS.gnd,
-    points: [w(17, 25, 85.4, 1.35), w(27.5, 18, 70, 1.1), { p: holePos("B20", PERF.z1), layer: 0.85 }],
+    points: [w(17, 25, 85.4, 1.35), w(34.5, 18, 70, 1.1), w(34.5, -14, 50, 0.9), { p: holePos("T2", PERF.z1), layer: 0.85 }],
   },
   {
     id: "amp-power-plus",
-    label: "D19 (5V) to PAM8403 power +",
+    label: "S4 (5V) to PAM8403 power +",
     color: NET_COLORS.v5,
-    points: [{ p: holePos("D19", PERF.z1), layer: 0.85 }, w(20, 20, 62, 1.1), w(-2, 19.5, 78, 1.3), w(-9, 15, 85.4, 1.35)],
+    points: [{ p: holePos("S4", PERF.z1), layer: 0.85 }, w(23, -4, 62, 1.1), w(-2, 19.5, 78, 1.3), w(-9, 15, 85.4, 1.35)],
   },
   {
     id: "amp-power-minus",
-    label: "D20 (GND) to PAM8403 power -",
+    label: "T4 (GND) to PAM8403 power -",
     color: NET_COLORS.gnd,
-    points: [{ p: holePos("D20", PERF.z1), layer: 0.85 }, w(23, 19, 62, 1.1), w(0, 18.5, 78, 1.3), w(-9, 11, 85.4, 1.35)],
+    points: [{ p: holePos("T4", PERF.z1), layer: 0.85 }, w(26, -5, 62, 1.1), w(0, 18.5, 78, 1.3), w(-9, 11, 85.4, 1.35)],
   },
-  ...(["N15", "N16", "N17"] as const).map((ref, i): Wire3D => ({
+  ...(["O14", "P14", "Q14"] as const).map((ref, i): Wire3D => ({
     id: `amp-in-${ref}`,
     label: `${ref} to PAM8403 input ${["L", "R", "G"][i]}`,
     color: i === 2 ? NET_COLORS.gnd : NET_COLORS.audio,
     points: [
       { p: holePos(ref, PERF.z1), layer: 0.85 },
-      w(14 + i, -22, 52, 0.9),
-      w(i * 1.5, -24, 70, 1.2),
-      w(-26 + i * 1.2, -6, 82, 1.35),
+      w(14 + i, 19, 64, 1.1),
+      w(-6 + i * 1.2, 16, 78, 1.3),
+      w(-26 + i * 1.2, 4, 82, 1.35),
       w(-29 + i * 3, -1, 85.4, 1.35),
     ],
   })),
@@ -320,13 +330,15 @@ export const WIRES_3D: Wire3D[] = [
     const xp = -4.4 + i * 1.25;
     return {
       id: `screen-${pin.label}`,
-      label: `Screen cable ${pin.label} to N${i + 1}`,
+      label: `Screen cable ${pin.label} to ${"ABCDEFGH"[i]}14`,
       color: pin.color,
       r: 0.35,
+      // Over the top of the battery holder, then down between it and the screen to the plug
       points: [
-        { p: [x, rowN, PT + 8.5], layer: 0.85 },
-        w(x * 0.6, -36.5 - i * 0.3, 48, 0.75),
-        w(x * 0.3, -36.5 - i * 0.3, 20, 0.4),
+        { p: [x, row14, PT + 8.5], layer: 0.85 },
+        w(x * 0.6, 37 + i * 0.3, 48, 0.75),
+        w(x * 0.3, 37 + i * 0.3, 13, 0.4),
+        w(xp, -18, 13, 0.2),
         w(xp, -24.75, 12, 0.2),
       ],
     };

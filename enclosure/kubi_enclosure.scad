@@ -61,6 +61,17 @@ usb_w = 9.4;     // USB-C receptacle 8.94 x 3.26 plus clearance
 usb_h = 3.7;
 usb_wall = 1.2;  // back wall thinned around the port so the plug can seat fully
 
+/* [IMU clearance] */
+// The DFRobot 10DOF V2 has straight pins, so it lies flat in its socket on the
+// perfboard's row-14 edge and reaches 26 mm past its pins: about 42.5 mm from the
+// cube centre, just past a side panel's inner face (42 mm). Every panel gets two
+// shallow pockets on its inside, mirrored, so any panel still fits any face either
+// way round. Centred where the IMU board sits, about 54-58 mm behind the front face.
+imu_pocket_w = 36;  // across the panel
+imu_pocket_l = 12;  // along the panel (front to back)
+imu_pocket_y = 11;  // pocket centres from the panel centre (56 mm from the front face)
+imu_pocket_d = 2;   // leaves 1 mm of the 3 mm panel: 1.5 mm clearance
+
 /* [Internal carrier] */
 mid_z = 35;      // front face of the mid-plate; the battery holder (21 deep) sits in front
 mid_t = 3;
@@ -261,6 +272,10 @@ module side_panel() {
         for (sx = [-1, 1], sy = [-1, 1])
             translate([sx * (H - post - ledge / 2), sy * (panel_l / 2 - (mag_inset_z - gap)), t - mag_h - 0.2])
                 magnet_pocket();
+        // clearance for the IMU's far edge (see [IMU clearance])
+        for (sy = [-1, 1])
+            translate([0, sy * imu_pocket_y, t - imu_pocket_d])
+                linear_extrude(imu_pocket_d + 0.01) rrect(imu_pocket_w, imu_pocket_l, 1);
     }
 }
 

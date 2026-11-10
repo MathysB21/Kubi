@@ -9,7 +9,7 @@ Parametric OpenSCAD model of the 90 mm cube: `kubi_enclosure.scad`. Open it in O
 | `front` | 1, front face down | Screen window, speaker grilles, four corner posts with the magnet ledges, screw blocks on top of the posts |
 | `back` | 1, back face down | USB-C port, vents, four legs that carry the mid-plate |
 | `midplate` | 1, battery side down | Battery holder strapped in front, perfboard on standoffs behind |
-| `side` | 4, outer face down | Removable panels, magnets on the inside |
+| `side` | 4, outer face down | Removable panels, magnets on the inside, two 2 mm pockets on the inside that clear the IMU's far edge |
 
 `assembly` and `exploded` are for looking at it, not for printing.
 
@@ -58,4 +58,5 @@ They do not affect the electronics: the ESP32, flash, screen and amp are not mag
 - Front 0-3 mm: face; 3-~13 mm: screen module and its plug, speakers either side.
 - 14-35 mm: battery holder (78 mm side to side), centred, so the cube rolls evenly.
 - 35-38 mm: mid-plate. 42-~62 mm: perfboard with the ESP32 and IMU.
-- Back plate inside: TP4056 below centre (USB-C at x 0, y -30), MT3608 and PAM8403 anywhere clear of the legs at (±29, ±29). Do not put the PAM8403's knob (about 20 mm tall) straight above the upright IMU on the perfboard: with the back held in place, check there are a few millimetres between them before gluing.
+- The IMU (DFRobot 10DOF V2, straight pins) lies flat in its socket and reaches 26 mm past the perfboard's row-14 edge, about 0.5 mm past a side panel's inner face. Every side panel has two mirrored 2 mm pockets on its inside for it (`imu_pocket_*`), so any panel still fits any face either way round. Glue the perfboard a millimetre or two away from that side for extra room.
+- Back plate inside: TP4056 below centre (USB-C at x 0, y -30), MT3608 and PAM8403 anywhere clear of the legs at (±29, ±29). Keep the PAM8403's knob (about 20 mm tall) clear of the ESP32 and the IMU on the perfboard: with the back held in place, check there are a few millimetres between them before gluing.

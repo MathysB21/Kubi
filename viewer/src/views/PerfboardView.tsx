@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { NET_COLORS } from "../model/electronics";
-import { BOARD_WIRES, NET_NAMES, OFFBOARD_WIRES, PADS, R2, SOCKET_B, SOCKET_K, type BoardWire, type Net } from "../model/perfboard";
-import { COLS, parseHole, ROWS } from "../model/scad";
+import { BOARD_WIRES, NET_NAMES, OFFBOARD_WIRES, PADS, R2, SOCKET_HIGH, SOCKET_LOW, SOCKET_ROW, type BoardWire, type Net } from "../model/perfboard";
+import { COL_LETTERS, COLS, parseHole, ROWS } from "../model/scad";
 import { usePersistentSet } from "../hooks";
 import { Button, Hint, Section, Segmented, Toggle } from "../ui";
 
@@ -15,7 +15,7 @@ const MT = 30;
 const W = ML + 27 * P;
 const HGT = MT + 17 * P;
 
-const PAD_TAGS: Record<string, string> = { B19: "5i", B20: "Gi", D19: "5a", D20: "Ga", F19: "Bt" };
+const PAD_TAGS: Record<string, string> = { S2: "5i", T2: "Gi", S4: "5a", T4: "Ga", S6: "Bt" };
 
 export function PerfboardView() {
   const [side, setSide] = useState<Side>("component");
@@ -24,15 +24,16 @@ export function PerfboardView() {
   const done = usePersistentSet("kubi-viewer:wires-done");
 
   const colX = (col: number) => ML + ((side === "solder" ? COLS + 1 - col : col) + 3) * P;
-  const rowY = (r: number) => MT + (r + 1.6) * P;
+  // Row 14 at the top, row 1 at the bottom, as the board is printed
+  const rowY = (r: number) => MT + (ROWS - r + 1.6) * P;
   const at = (ref: string) => {
     const h = parseHole(ref);
-    return { x: colX(h.col), y: rowY(ROWS.indexOf(h.row)) };
+    return { x: colX(h.col), y: rowY(h.row) };
   };
-  // Board edges, in hole units: 2.31 pitches beyond columns 1/20, 1.37 beyond rows A/N
+  // Board edges, in hole units: 2.31 pitches beyond columns A/T, 1.37 beyond rows 1/14
   const boardX0 = Math.min(colX(1 - 2.31), colX(COLS + 2.31));
   const boardX1 = Math.max(colX(1 - 2.31), colX(COLS + 2.31));
-  // ESP32 outline: x -33.1..17.9 mm and y 16.54..-11.46 mm, in hole units
+  // ESP32 outline: x -33.1..17.9 mm and y -15.27..12.73 mm (rows 1.49..12.51), in hole units
   const espX0 = Math.min(colX(-2.53), colX(17.55));
   const espX1 = Math.max(colX(-2.53), colX(17.55));
   const hovered = BOARD_WIRES.find((w) => w.id === hover);
@@ -56,22 +57,24 @@ export function PerfboardView() {
 
         <svg viewBox={`0 0 ${W} ${HGT}`} className="w-full max-w-[1100px] select-none">
           {/* board */}
-          <rect x={boardX0} y={rowY(-1.37)} width={boardX1 - boardX0} height={rowY(14.37) - rowY(-1.37)} rx={6}
+          <rect x={boardX0} y={rowY(ROWS + 1.37)} width={boardX1 - boardX0} height={rowY(-0.37) - rowY(ROWS + 1.37)} rx={6}
             fill={side === "component" ? "#3b2f20" : "#2b2418"} stroke="#6b5636" />
-          {/* column numbers and row letters */}
+          {/* column letters and row numbers, as printed on the board */}
           {Array.from({ length: COLS }, (_, i) => (
-            <text key={i} x={colX(i + 1)} y={MT + 0.6 * P} textAnchor="middle" fontSize={10} fill="#a1a1aa">{i + 1}</text>
+            <text key={i} x={colX(i + 1)} y={MT + 0.6 * P} textAnchor="middle" fontSize={10} fill="#a1a1aa">{COL_LETTERS[i]}</text>
           ))}
-          {[...ROWS].map((r, i) => (
-            <text key={r} x={Math.min(colX(-2), colX(23)) - 8} y={rowY(i) + 3.5} textAnchor="middle" fontSize={10} fill="#a1a1aa">{r}</text>
+          {Array.from({ length: ROWS }, (_, i) => (
+            <text key={i} x={Math.min(colX(-2), colX(23)) - 8} y={rowY(i + 1) + 3.5} textAnchor="middle" fontSize={10} fill="#a1a1aa">
+              {String(i + 1).padStart(2, "0")}
+            </text>
           ))}
           {/* holes */}
-          {[...ROWS].flatMap((_, ri) => Array.from({ length: COLS }, (_, ci) => (
-            <circle key={`${ri}-${ci}`} cx={colX(ci + 1)} cy={rowY(ri)} r={4.2} fill="#c08a3e" stroke="#7a5524" strokeWidth={0.8} />
-          )))}
+          {Array.from({ length: ROWS }, (_, ri) => Array.from({ length: COLS }, (_, ci) => (
+            <circle key={`${ri}-${ci}`} cx={colX(ci + 1)} cy={rowY(ri + 1)} r={4.2} fill="#c08a3e" stroke="#7a5524" strokeWidth={0.8} />
+          ))).flat()}
 
-          {/* ESP32 sockets (rows B and K, columns 1-15) */}
-          {[{ row: 1, pins: SOCKET_B, above: true }, { row: 10, pins: SOCKET_K, above: false }].map(({ row, pins, above }) => (
+          {/* ESP32 sockets (rows 2 and 12, columns A-O); labels on the side away from row 14's headers */}
+          {[{ row: SOCKET_ROW.low, pins: SOCKET_LOW, above: false }, { row: SOCKET_ROW.high, pins: SOCKET_HIGH, above: false }].map(({ row, pins, above }) => (
             <g key={row}>
               {side === "component" && (
                 <rect x={Math.min(colX(1), colX(15)) - P / 2} y={rowY(row) - P / 2.4} width={15 * P} height={P / 1.2} rx={3}
@@ -90,10 +93,10 @@ export function PerfboardView() {
           {/* ESP32 outline */}
           {outline && (
             <g pointerEvents="none">
-              <rect x={espX0} y={rowY(-0.01) - P / 2} width={espX1 - espX0} height={rowY(11.01) - rowY(-0.01) + P / 2} rx={6}
+              <rect x={espX0} y={rowY(12.51)} width={espX1 - espX0} height={rowY(1.49) - rowY(12.51)} rx={6}
                 fill="none" stroke="#a1a1aa" strokeDasharray="6 5" strokeWidth={1.2} />
-              <text x={(espX0 + espX1) / 2} y={rowY(8) + 4} textAnchor="middle" fontSize={11} fill="#71717a">
-                ESP32 sits ~10 mm above (antenna end at column 1)
+              <text x={(espX0 + espX1) / 2} y={rowY(9) + 4} textAnchor="middle" fontSize={11} fill="#71717a">
+                ESP32 sits ~10 mm above (antenna end at column A)
               </text>
             </g>
           )}
@@ -107,7 +110,8 @@ export function PerfboardView() {
                 {side === "component" ? (
                   <>
                     <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#d4d4d8" strokeWidth={1.5} />
-                    <rect x={a.x - 5} y={a.y + (b.y - a.y) * 0.25} width={10} height={(b.y - a.y) * 0.5} rx={4} fill="#d6b88a" stroke="#8a6d3b" />
+                    <rect x={a.x - 5} y={Math.min(a.y, b.y) + Math.abs(b.y - a.y) * 0.25} width={10} height={Math.abs(b.y - a.y) * 0.5} rx={4}
+                      fill="#d6b88a" stroke="#8a6d3b" />
                   </>
                 ) : (
                   <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#d6b88a" strokeWidth={1} strokeDasharray="2 3" />
@@ -188,7 +192,10 @@ export function PerfboardView() {
 
       <aside className="w-full shrink-0 border-t border-zinc-800 bg-zinc-950/80 lg:w-[400px] lg:overflow-y-auto lg:border-l lg:border-t-0">
         <Section title={`On the board: ${boardDone} / ${BOARD_WIRES.length}`} right={<Button onClick={done.clear}>Reset ticks</Button>}>
-          <Hint>Solder side, in this order. Strip 2-3 mm, tin, keep wires flat and away from the antenna end (column 1).</Hint>
+          <Hint>
+            Solder side, in this order. Strip 2-3 mm, tin, keep wires flat and away from the antenna end (column A). Leave the
+            pigtail holes (S2, T2, S4, T4, S6, O14-Q14) empty until their outside wire is through.
+          </Hint>
           <ul className="mt-3 space-y-1">
             {BOARD_WIRES.map((w) => (
               <li key={w.id}>
@@ -229,9 +236,9 @@ export function PerfboardView() {
         <Section title="Before power-up">
           <ul className="list-disc space-y-1.5 pl-4 text-sm text-zinc-300">
             <li>ESP32 out: every wire beeps end to end.</li>
-            <li>No beep between 5 V, 3.3 V and GND: B15-B14, K15-K14, B15-K15.</li>
+            <li>No beep between 5 V, 3.3 V and GND: O2-N2, O12-N12, O2-O12.</li>
             <li>No beep between neighbouring socket holes.</li>
-            <li>F19 to GND reads about 10 kohm (R2).</li>
+            <li>S6 to GND reads about 10 kohm (R2).</li>
           </ul>
         </Section>
       </aside>

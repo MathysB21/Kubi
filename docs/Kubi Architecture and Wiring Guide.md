@@ -216,67 +216,77 @@ Route the screen cable around the battery holder (there is ~21 mm above and belo
 
 5. Perfboard (40 x 60 mm, 14 x 20 holes)
 
-Columns 1-20 run along the 60 mm side, rows A-N along the 40 mm side. Component side, viewed from above:
+Holes are named by the coordinates printed on the board: columns A-T along the 60 mm side, rows 01-14 along the 40 mm side, so "O12" is column O, row 12. Component side (the printed side) up, column A on the left, row 01 at the bottom:
 
 ```
-        1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20
-   A    .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
-   B    S  S  S  S  S  S  S  S  S  S  S  S  S  S  S  .  .  .  5i Gi    S = ESP32 socket, side with EN ... VIN
-   C    .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
-   D    .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  5a Ga
-   E    .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
-   F    .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  Bt .
-   G    .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
-   H    .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
-   I    .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
-   J    .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
-   K    S  S  S  S  S  S  S  S  S  S  S  S  S  S  S  .  .  .  .  .    S = ESP32 socket, side with D23 ... 3V3
-   L    .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
-   M    .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
-   N    d  d  d  d  d  d  d  d  .  i  i  i  i  .  a  a  a  .  .  .
+        A  B  C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T
+   14   d  d  d  d  d  d  d  d  .  i  i  i  i  .  a  a  a  .  .  .
+   13   .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
+   12   S  S  S  S  S  S  S  S  S  S  S  S  S  S  S  .  .  .  .  .    S = ESP32 socket, side with D23 ... 3V3
+   11   .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
+   10   .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
+   09   .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
+   08   .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
+   07   .  .  .  r  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
+   06   .  .  .  r  .  .  .  .  .  .  .  .  .  .  .  .  .  .  Bt .
+   05   .  .  .  r  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
+   04   .  .  .  r  .  .  .  .  .  .  .  .  .  .  .  .  .  .  5a Ga
+   03   .  .  .  r  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
+   02   S  S  S  S  S  S  S  S  S  S  S  S  S  S  S  .  .  .  5i Gi    S = ESP32 socket, side with EN ... VIN
+   01   .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
 ```
 
-- ESP32: two 15-way female headers (cut down from longer strips), pins in columns 1-15, antenna end at column 1 hanging off the board edge, USB-C end towards column 15. Rows B and K: this board's two pin rows are 9 holes (22.9 mm) apart, measured. The ESP32's PCB overhangs to about column 18 at the USB end, so nothing tall goes in columns 16-18.
-- Socket pin order, column 1 to 15, confirmed against the pinout of the board in use (30-pin ESP32 DevKit, ESP32-D0WD-V3 module, CH340 USB-C):
-  - Row B: EN, VP (GPIO36), VN (GPIO39), D34, D35, D32, D33, D25 (DAC1), D26 (DAC2), D27, D14, D12, D13, GND, VIN
-  - Row K: D23 (MOSI), D22 (SCL), TX0, RX0, D21 (SDA), D19, D18 (SCK), D5, TX2, RX2, D4, D2, D15, GND, 3V3
+When you turn the board over to solder, turn it side to side like a page: row 01 stays at the bottom, and the letters then run T to A from left to right.
+
+- ESP32: two 15-way female headers (cut down from longer strips), pins in columns A-O, antenna end at column A hanging off the board edge, USB-C end towards column O. Rows 02 and 12: the two pin rows are 10 holes (25.4 mm) apart, measured on the board in use. With the chip facing up and the antenna on the left, the EN ... VIN row is the one nearest you, so it goes in row 02. The ESP32's PCB overhangs to about column R at the USB end and reaches about halfway to rows 01 and 13, so nothing tall goes in columns P-R or under it.
+- Socket pin order, column A to O, confirmed against the pinout of the board in use (30-pin ESP32 DevKit, ESP32-D0WD-V3 module, CH340 USB-C):
+  - Row 02: EN, VP (GPIO36), VN (GPIO39), D34, D35, D32, D33, D25 (DAC1), D26 (DAC2), D27, D14, D12, D13, GND, VIN
+  - Row 12: D23 (MOSI), D22 (SCL), TX0, RX0, D21 (SDA), D19, D18 (SCK), D5, TX2, RX2, D4, D2, D15, GND, 3V3
 - Male headers can be made up from short pieces placed end to end.
-- Row N, d (columns 1-8): male header for the screen cable, in the cable's order VCC, GND, DIN, CLK, CS, DC, RST, BL (check the labels on your cable).
-- Row N, i (columns 10-13): 4-way female header the IMU board plugs into upright, so it is held rigidly. Order assumed VCC, GND, SDA, SCL; match your IMU board.
-- Row N, a (columns 15-17): solder points for the wires to the PAM8403 input: L, R, G.
-- Columns 19-20: solder points. 5i / Gi = 5 V and GND in from the MT3608. 5a / Ga = 5 V and GND out to the PAM8403 power pins. Bt = battery sense in, the wire from R1.
-- Power, amp and battery-sense wires are soldered straight into these holes rather than plugged onto header pins: a cube that gets rolled and knocked shakes plugs loose. Only the screen cable (it has its own plug) and the IMU (in its socket) stay removable.
-- Under the ESP32 (rows C-J, the space between the sockets): R2 (and C1 if fitted) lying flat, next to the D34 socket pin. Only flat parts here: the ESP32 sits ~10 mm above the board.
+- d, A14-H14: 8 male header pins for the screen cable, in the order printed on the screen: VCC, GND, DIN, CLK, CS, DC, RST, BL. The cable is wired straight through; on the cable in use the colours are purple (VCC, on A14), white, green, orange, yellow, blue, brown, grey (BL, on H14).
+- i, J14-M14: 4-way female header for the IMU (DFRobot 10DOF V2). Its pins are straight, so it lies flat in the socket with its body overhanging the board's row-14 edge by about 22 mm, away from the ESP32 (the two sit at the same height and would collide the other way round). Plugged in that way its pins land as J14 SDA, K14 SCL, L14 GND, M14 VIN. Its pin labels read VIN, GND, SCL, SDA; a different IMU board needs its own check of the order and which way it can lie.
+- a, O14-Q14: solder points for the wires to the PAM8403 input: L, R, G.
+- Columns S-T: solder points. 5i / Gi (S2 / T2) = 5 V and GND in from the MT3608. 5a / Ga (S4 / T4) = 5 V and GND out to the PAM8403 power pins. Bt (S6) = battery sense in, the wire from R1.
+- Power, amp and battery-sense wires are soldered straight into these holes rather than plugged onto header pins: a cube that gets rolled and knocked shakes plugs loose. Only the screen cable (it has its own plug) and the IMU (in its socket) stay removable. Leave these holes empty while wiring the rest: the outside wire goes through first, and the board wire is soldered to its end on the solder side.
+- r, D3-D7: R2 lying flat under the ESP32, its D3 leg bent over on the solder side and soldered to D2 (the D34 socket pin), which makes the bridge. Only flat parts here: the ESP32 sits ~10 mm above the board.
 
-Wires on the solder side (tick off while soldering):
+Wires on the solder side, in the order they were soldered (tick off while soldering):
 
 | From | To | Note |
 |---|---|---|
-| B15 VIN | B19 5i, D19 5a | 5 V |
-| B14 GND, K14 GND | B20 Gi, D20 Ga, N2, N11, N17, R2, C1 | one common ground |
-| K15 3V3 | N1 (screen VCC), N10 (IMU VCC) | the only source on the 3.3 V rail |
-| K1 D23 / K7 D18 | N3 DIN / N4 CLK | SPI |
-| K8 D5 / K12 D2 / K11 D4 | N5 CS / N6 DC / N7 RST | GPIO 2 is a boot pin: hold BOOT if a USB flash fails |
-| B6 D32 | N8 BL | backlight PWM |
-| K5 D21 / K2 D22 | N12 SDA / N13 SCL | I2C: ADXL345 0x53, BMP280 0x77 |
-| B8 D25 / B9 D26 | N15 L / N16 R | DAC audio |
-| B4 D34 | F19 Bt, R2 to GND, C1 to GND | battery sense node |
+| N2 GND | N12 GND, D7 (R2) | ground |
+| N12 GND | L14 (IMU GND) | ground |
+| L14 | B14 (screen GND) | ground, run along the empty row 13 |
+| N2 | T2 Gi, then T2 to T4 Ga | ground, once the pigtails are in |
+| L14 | Q14 (amp input G) | ground, once the pigtail is in |
+| O12 3V3 | M14 (IMU VIN), then M14 to A14 (screen VCC) | the only source on the 3.3 V rail; only one wire on O12, because its neighbour N12 is GND |
+| O2 VIN | S2 5i, then S2 to S4 5a | 5 V |
+| A12 D23 / G12 D18 | C14 DIN / D14 CLK | SPI |
+| H12 D5 / L12 D2 / K12 D4 | E14 CS / F14 DC / G14 RST | GPIO 2 is a boot pin: hold BOOT if a USB flash fails |
+| F2 D32 | H14 BL | backlight PWM |
+| E12 D21 / B12 D22 | J14 SDA / K14 SCL | I2C: ADXL345 0x53, BMP280 0x77 |
+| H2 D25 / I2 D26 | O14 L / P14 R | DAC audio |
+| D2 D34 | D3 (R2's own leg), S6 Bt | battery sense node |
+
+The screen wires pass over the row-13 ground wire: solder at the tip of each stub, keep the iron off the ground wire's insulation, and beep each new wire against GND straight away.
 
 Off-board wiring:
 
 | From | To | Note |
 |---|---|---|
 | Holder + / - | TP4056 B+ / B- | keep short; 26 AWG stranded is fine at these currents (up to 1 A while charging) |
-| Holder + | R1 at the holder, then a wire to perfboard F19 | R1 at the battery end |
+| Holder + | R1 at the holder, then a wire to perfboard S6 | R1 at the battery end |
 | TP4056 OUT+ / OUT- | MT3608 IN+ / IN- | power switch goes in the OUT+ wire later |
-| MT3608 OUT+ / OUT- | perfboard B19 / B20 | set to 5.0 V first |
-| Perfboard D19 / D20 | PAM8403 power + / - | |
-| Perfboard N15 / N16 / N17 | PAM8403 input L / R / G | |
+| MT3608 OUT+ / OUT- | perfboard S2 / T2 | set to 5.0 V first |
+| Perfboard S4 / T4 | PAM8403 power + / - | |
+| Perfboard O14 / P14 / Q14 | PAM8403 input L / R / G | |
 | PAM8403 lout + / - | left speaker | never to GND |
 | PAM8403 rout + / - | right speaker | never to GND |
-| Screen cable | perfboard N1-N8 | |
+| Screen cable | perfboard A14-H14 | VCC (purple) on A14 |
 
-Parts: two 15-way female headers, one 4-way female header, 8 male header pins (for the screen cable), R1 and R2, hook-up wire (26 AWG stranded throughout; stranded also survives a cube being rolled and knocked better than solid core). C1 (100 nF ceramic) is optional: with 10 kΩ resistors the divider is stiff enough for the ADC, and the firmware averages many readings.
+Mounting: on the mid-plate, component side towards the back plate, row 14 (the screen and IMU headers) towards the top of the cube on Face 1, the side away from the TP4056. The flat IMU then reaches to within about 0.5 mm of the top panel, which is why every side panel has two shallow pockets on its inside. Glue the board a millimetre or two away from that side for extra room. The other way up, the IMU would sit about 1 mm under the TP4056.
+
+Parts: two 15-way female headers, one 4-way female header, 8 male header pins (for the screen cable), R1 and R2, hook-up wire (26 AWG stranded throughout; stranded also survives a cube being rolled and knocked better than solid core). C1 (100 nF ceramic) is optional: with 10 kΩ resistors the divider is stiff enough for the ADC, and the firmware averages many readings. As built, R1 measures 9.28 kΩ and R2 9.42 kΩ, so the divider ratio is 0.504 (use it in TSK-391).
 
 After assembly, the sensor's position relative to the screen has changed from the breadboard, so rerun firmware/tools/capture_faces.ps1 and update FaceMap.h (TSK-768).
 
