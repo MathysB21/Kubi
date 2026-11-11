@@ -12,6 +12,7 @@ public:
 
     void init();
     void setBacklight(uint8_t brightness);
+    void powerDown(); // backlight off, panel display-off + sleep-in (before deep sleep)
     void setSleep(bool sleep);
     bool isSleeping() const { return _sleeping; }
     void loop(); // Inactivity timer + backlight fade. Call from the hardware loop.

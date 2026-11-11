@@ -52,6 +52,13 @@ void DisplayManager::setBacklight(uint8_t brightness) {
     ledcWrite(PWM_CHANNEL, brightness);
 }
 
+void DisplayManager::powerDown() {
+    setBacklight(0);
+    _tft.writecommand(0x28); // DISPOFF
+    delay(10);
+    _tft.writecommand(0x10); // SLPIN; the next init() resets the panel anyway
+}
+
 // Backlight steps per loop() call while fading (~10 ms per call -> ~0.35 s full range)
 #define BACKLIGHT_FADE_STEP 8
 

@@ -72,6 +72,8 @@ public:
         fillScreen(TFT_BLACK);
     }
 
+    void writecommand(uint8_t c) { (void)c; } // panel commands (sleep in/out): nothing to do in the sim
+
     void invertDisplay(bool i) {
         _invert = i;
     }

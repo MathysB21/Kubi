@@ -32,6 +32,7 @@ import {
   BatteryFull,
   PlugZap,
   Image,
+  Power,
 } from "lucide-react";
 import { Accordion } from "./components/Accordion";
 import {
@@ -225,6 +226,26 @@ function KubiDashboard() {
   useEffect(() => {
     if (alertLowDraft !== null && data.chargeAlertLow === alertLowDraft) setAlertLowDraft(null);
   }, [data.chargeAlertLow, alertLowDraft]);
+
+  // Nap: Kubi goes dark and offline until picked up. Two taps so it cannot happen by accident.
+  const [napArmed, setNapArmed] = useState(false);
+  useEffect(() => {
+    if (!napArmed) return;
+    const t = setTimeout(() => setNapArmed(false), 5000);
+    return () => clearTimeout(t);
+  }, [napArmed]);
+  const napMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/nap", { method: "POST" });
+      if (!res.ok) throw new Error("Nap failed");
+      return res.json();
+    },
+    onSuccess: () => {
+      setNapArmed(false);
+      toast.success("Good night, Kubi. Pick him up to wake him.", { duration: 8000 });
+    },
+    onError: () => toast.error("Could not reach Kubi"),
+  });
 
   // 2. Settings mutation
   const mutation = useMutation({
@@ -550,6 +571,33 @@ function KubiDashboard() {
               </div>
             );
           })}
+        </div>
+      ),
+    },
+    // POWER ITEM
+    {
+      headerContent: (
+        <div className="flex items-center gap-3 font-medium text-zinc-100">
+          <Power size={18} className="text-amber-500" /> Power
+        </div>
+      ),
+      bodyContent: (
+        <div className="space-y-4 text-sm">
+          <p className="text-xs text-zinc-500 leading-relaxed">
+            Put Kubi to sleep when you are away: his screen, sound and WiFi switch off until someone picks him up.
+            He still charges while asleep. A full battery lasts about a week this way; for longer, switch him off.
+          </p>
+          <button
+            onClick={() => (napArmed ? napMutation.mutate() : setNapArmed(true))}
+            disabled={napMutation.isPending}
+            className={`w-full py-2.5 rounded-xl text-sm font-medium border transition-colors cursor-pointer ${
+              napArmed
+                ? "bg-amber-500/15 border-amber-500/60 text-amber-400"
+                : "bg-zinc-950 border-zinc-800 text-zinc-300 hover:text-zinc-100 hover:border-zinc-700"
+            }`}
+          >
+            {napArmed ? "Tap again to put Kubi to sleep" : "Put Kubi to sleep"}
+          </button>
         </div>
       ),
     },

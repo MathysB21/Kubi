@@ -55,6 +55,8 @@ volatile float    batteryVoltage         = 3.95f; // the sim injects percent onl
 static int chargeAlertHigh = 0, chargeAlertLow = 0; // stored, mirrors API.cpp (no reminders in the sim)
 volatile bool     isScreenOverrideActive = false;
 volatile bool     factoryResetRequested  = false;
+volatile bool     napRequested           = false; // POST /api/nap, mirrors main.cpp
+static bool       simNapping             = false; // the sim has no deep sleep: dark screen until a gesture or motion
 
 // Mirrors main.cpp first-connect address screen
 static uint32_t addressScreenUntil = 0;
@@ -137,6 +139,22 @@ void hardwareSimulationThread() {
         if (factoryResetRequested) {
             simFactoryReset();
             now = millis();
+        }
+        if (napRequested) {
+            napRequested = false;
+            display.requestWake();
+            display.drawBootScreen("Good night!");
+            audio.playChime(CHIME_TAP_FEEDBACK);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+            display.setSleep(true);
+            simNapping = true;
+            std::cout << "[SIM NAP] Sleeping until a gesture or motion" << std::endl;
+        }
+        if (simNapping && !display.isSleeping()) {
+            simNapping = false; // picked up: the real cube reboots here, with its wake chime
+            audio.playChime(CHIME_WAKE_PING);
+            display.invalidate();
+            std::cout << "[SIM NAP] Woken up" << std::endl;
         }
 
         // 1. Poll Sensors & Display (audio runs in its own thread, like main.cpp audioTask)
@@ -701,6 +719,12 @@ int main() {
     // -------------------------------------------------------------------------
     // 6. POST /api/factory-reset (mirrors API.cpp)
     // -------------------------------------------------------------------------
+    svr.Post("/api/nap", [](const httplib::Request& req, httplib::Response& res) {
+        addCors(res);
+        napRequested = true;
+        res.set_content("{\"status\":\"napping\"}", "application/json");
+    });
+
     svr.Post("/api/factory-reset", [](const httplib::Request& req, httplib::Response& res) {
         addCors(res);
         JsonDocument json;

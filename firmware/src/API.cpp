@@ -30,6 +30,7 @@ extern int mascotSceneIndex;
 extern volatile int mascotPreviewScene;
 extern volatile uint32_t mascotPreviewAt;
 extern volatile int birthdayMMDD;
+extern volatile bool napRequested;
 
 // Diagnostics
 extern volatile float diagAccelX;
@@ -299,6 +300,15 @@ void setupAPIRoutes(AsyncWebServer& server) {
 
         serializeJson(doc, *response);
         request->send(response);
+    });
+
+    // =========================================================================
+    // POST /api/nap: Kubi says good night and deep-sleeps until picked up.
+    // Only sets the flag; the hardware loop draws, configures and sleeps.
+    // =========================================================================
+    server.on("/api/nap", HTTP_POST, [](AsyncWebServerRequest *request) {
+        napRequested = true;
+        request->send(200, "application/json", "{\"status\":\"napping\"}");
     });
 
     // =========================================================================

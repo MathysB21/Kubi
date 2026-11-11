@@ -20,6 +20,9 @@
 #include "KubiScenes.h"
 #include "Battery.h"
 #include "SceneSchedule.h"
+#include <Wire.h>
+#include <esp_sleep.h>
+#include <driver/rtc_io.h>
 
 // =============================================================================
 // KUBI: DESK COMPANION CUBE (ESP32 DUAL-CORE ARCHITECTURE)
@@ -359,6 +362,90 @@ void performFactoryReset() {
   ESP.restart();
 }
 
+// --- NAP: Kubi's "off" without a power switch ---
+// The dashboard asks for it (POST /api/nap sets napRequested; the hardware
+// loop does the rest). Screen, WiFi and sound go off and the ESP32 deep-sleeps.
+// The ADXL345 stays powered with its activity detector latching any pickup;
+// every NAP_CHECK_S the ESP32 wakes, reads that latch before anything else in
+// setup(), and goes straight back to sleep unless Kubi was moved. Its INT pin
+// is not wired, hence the polling. The amp, boost converter and DevKit keep
+// drawing a little, so a nap lasts about a week, not months.
+volatile bool napRequested = false;
+RTC_DATA_ATTR static bool napping = false;
+#define NAP_CHECK_S        2
+#define NAP_ADXL_ADDR      0x53
+#define NAP_ACT_THRESHOLD  8      // 62.5 mg/LSB: a 0.5 g change counts as being picked up
+static const gpio_num_t NAP_HOLD_PINS[] = { GPIO_NUM_32, GPIO_NUM_25, GPIO_NUM_26 }; // backlight, DAC L, DAC R
+
+static uint8_t napAdxlRead(uint8_t reg, bool& ok) {
+  Wire.beginTransmission(NAP_ADXL_ADDR);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0 || Wire.requestFrom(NAP_ADXL_ADDR, 1) != 1) { ok = false; return 0; }
+  return Wire.read();
+}
+
+static void napAdxlWrite(uint8_t reg, uint8_t value) {
+  Wire.beginTransmission(NAP_ADXL_ADDR);
+  Wire.write(reg);
+  Wire.write(value);
+  Wire.endTransmission();
+}
+
+// Backlight and both amp inputs held low while asleep: dark screen, no hiss
+[[noreturn]] static void napSleep() {
+  for (gpio_num_t p : NAP_HOLD_PINS) {
+    rtc_gpio_init(p);
+    rtc_gpio_set_direction(p, RTC_GPIO_MODE_OUTPUT_ONLY);
+    rtc_gpio_set_level(p, 0);
+    rtc_gpio_hold_en(p);
+  }
+  esp_sleep_enable_timer_wakeup((uint64_t)NAP_CHECK_S * 1000000ULL);
+  esp_deep_sleep_start();
+  for (;;) {}
+}
+
+static void releaseNapPins() {
+  for (gpio_num_t p : NAP_HOLD_PINS) {
+    rtc_gpio_hold_dis(p);
+    rtc_gpio_deinit(p);
+  }
+}
+
+// First thing in setup(): during a nap, go back to sleep unless Kubi was moved
+static void checkNap() {
+  if (napping) {
+    if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER) {
+      Wire.begin(21, 22);
+      bool ok = true;
+      uint8_t source = napAdxlRead(0x30, ok); // INT_SOURCE; reading clears the latch
+      if (ok && !(source & 0x10)) napSleep();  // no activity: keep napping
+    }
+    napping = false; // picked up (or the sensor did not answer): wake properly
+  }
+  releaseNapPins();
+}
+
+static void enterNap() {
+  Serial.println("[NAP] Good night: sleeping until picked up");
+  display.requestWake();
+  display.drawBootScreen("Good night!");
+  audio.playChime(CHIME_TAP_FEEDBACK);
+  vTaskDelay(pdMS_TO_TICKS(1500));
+
+  bool ok = true;
+  napAdxlWrite(0x24, NAP_ACT_THRESHOLD);                // THRESH_ACT
+  napAdxlWrite(0x27, 0xF0);                             // ACT_INACT_CTL: AC-coupled, X Y Z
+  napAdxlWrite(0x2E, napAdxlRead(0x2E, ok) | 0x10);     // INT_ENABLE: activity
+  napAdxlRead(0x30, ok);                                // clear whatever latched so far
+
+  display.powerDown();
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  napping = true;
+  Serial.flush();
+  napSleep();
+}
+
 // --- BATTERY ---
 // GPIO 34 (ADC1, so it works alongside WiFi) reads the cell through R1/R2.
 #define BATTERY_SENSE_PIN   34
@@ -458,6 +545,9 @@ void core1HardwareTask(void * parameter) {
 
     if (factoryResetRequested) {
       performFactoryReset();
+    }
+    if (napRequested) {
+      enterNap(); // does not return
     }
 
     // A WiFi update is being written (see setupOTA): show it and pause the
@@ -691,6 +781,7 @@ void audioTask(void * parameter) {
 // ARDUINO SETUP
 // =============================================================================
 void setup() {
+  checkNap(); // before anything else: a nap check must be quick
   Serial.begin(115200);
   delay(500);
   Serial.println("\n=================================");
