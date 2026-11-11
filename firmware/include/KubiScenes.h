@@ -3,6 +3,37 @@
 #include <Arduino.h>
 #include <pgmspace.h>
 
+struct KubiAnimPoint { uint8_t x, y; };
+struct KubiAnimPixel { uint8_t x, y, c; };
+
+// Light animation over a scene, in scene pixels (see SCENE_ANIM in the script)
+struct KubiSceneAnim {
+    uint8_t eyeCount;              // blink: these pixels turn lidColor for a moment
+    const KubiAnimPoint* eyes;
+    uint16_t lidColor;
+    uint8_t sparkCount;            // twinkle: one of these glints now and then
+    const KubiAnimPoint* sparks;
+    uint16_t sparkColor;
+    uint8_t sparkEvery10;          // base ms between glints / 10
+    uint8_t rippleCount;           // ripple: pixels light up ring by ring (c = ring)
+    const KubiAnimPixel* ripple;
+    uint8_t rippleRings;
+    uint8_t wiggleCountA;          // wiggle: two frames of a limb shifted 1 px (c = palette index)
+    const KubiAnimPixel* wiggleA;
+    uint8_t wiggleCountB;
+    const KubiAnimPixel* wiggleB;
+    uint8_t particleKind;          // 0 none, 1 rise, 2 fall, 3 drift
+    uint16_t glyphMask;            // 4x4 bitmask, bit (y * 4 + x)
+    uint8_t glyphW, glyphH;
+    uint8_t maxParticles;          // at once
+    uint8_t spawnEvery;            // ticks (100 ms) between births
+    uint8_t speed16;               // 1/16 scene pixel per tick
+    uint8_t areaX, areaY, areaW, areaH;  // particles live here
+    uint8_t emitX, emitY, emitW, emitH;  // and are born here
+    uint8_t colorCount;
+    uint16_t colors[4];
+};
+
 struct KubiScene {
     const char* id;
     const char* title;
@@ -13,6 +44,7 @@ struct KubiScene {
     const uint16_t* palette;
     uint32_t rleLength;  // Total bytes in rleData (count, index pairs)
     const uint8_t* rleData;
+    const KubiSceneAnim* anim;  // nullptr: static scene
 };
 
 extern const KubiScene scene_beach_eating_ice_cream;

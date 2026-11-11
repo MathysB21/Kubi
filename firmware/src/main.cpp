@@ -3,6 +3,7 @@
 #include <WiFiMulti.h>
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
+#include <esp_core_dump.h>
 #include <Preferences.h>
 #include <ESPAsyncWebServer.h>
 #include <ESPmDNS.h>
@@ -14,8 +15,14 @@
 #include "SensorManager.h"
 #include "AudioManager.h"
 #include "PomodoroManager.h"
-#include "ScheduleManager.h"
-#include <vector>
+#include "AmbientFace.h"
+#include "MazeGame.h"
+#include "KubiScenes.h"
+#include "Battery.h"
+#include "SceneSchedule.h"
+#include <Wire.h>
+#include <esp_sleep.h>
+#include <driver/rtc_io.h>
 
 // =============================================================================
 // KUBI: DESK COMPANION CUBE (ESP32 DUAL-CORE ARCHITECTURE)
@@ -24,21 +31,63 @@
 // --- SHARED RUNTIME STATE GLOBALS ---
 volatile KubiMode currentMode            = MODE_CLOCK_IDLE; // Active face mode
 volatile float    roomTemperature        = 21.5f;           // BMP280 temperature
-volatile int      batteryPercentage      = 100;             // Battery telemetry
-String            secretIcalUrl          = "";              // Google Calendar iCal link
+volatile float    roomPressure           = 0.0f;            // BMP280 pressure, hPa
+volatile int      batteryPercentage      = 100;             // From the cell voltage (Battery.h)
+volatile float    batteryVoltage         = 0.0f;            // Smoothed cell voltage, 0 until the first read
 volatile bool     isScreenOverrideActive = false;           // Brother's secret text alert flag
-String            screenOverrideText     = "";              // Custom alert banner text
+volatile bool     factoryResetRequested  = false;           // Set by POST /api/factory-reset
+volatile bool     otaInProgress          = false;           // Set by the OTA callbacks (loop() task)
+
+// First connect after setup: "open kubi.local" screen (0 = not showing)
+static uint32_t addressScreenUntil = 0;
+static String   addressScreenIp;
+
+// Custom alert banner text: see setOverrideText()/getOverrideText()
+static char        overrideTextBuf[OVERRIDE_TEXT_MAX] = "";
+static portMUX_TYPE overrideTextMux = portMUX_INITIALIZER_UNLOCKED;
+
+void setOverrideText(const char* text) {
+  // Bounded memcpy only: no heap allocation while interrupts are masked
+  size_t len = strnlen(text, OVERRIDE_TEXT_MAX - 1);
+  portENTER_CRITICAL(&overrideTextMux);
+  memcpy(overrideTextBuf, text, len);
+  overrideTextBuf[len] = '\0';
+  portEXIT_CRITICAL(&overrideTextMux);
+}
+
+String getOverrideText() {
+  char local[OVERRIDE_TEXT_MAX];
+  portENTER_CRITICAL(&overrideTextMux);
+  memcpy(local, overrideTextBuf, OVERRIDE_TEXT_MAX);
+  portEXIT_CRITICAL(&overrideTextMux);
+  return String(local);
+}
 
 // Telemetry Diagnostics
 volatile float diagAccelX = 0.0f;
 volatile float diagAccelY = 0.0f;
 volatile float diagAccelZ = 1.0f;
 
-// --- CLOCK & SCENE SETTINGS ---
-static bool clockShowDetails = false;
+// --- CLOCK SETTINGS ---
 bool clockAnalogView = false;
-static uint32_t clockDetailsTimeout = 0;
-int mascotSceneIndex = 0; // Active placeholder scene on Mascot Face (0..9)
+
+// --- FACE 3 ---
+int mascotSceneIndex = 0; // Diorama on the Mascot face, 0..ALL_KUBI_SCENE_COUNT-1
+
+// Kubi picks the scene himself (SceneSchedule.h). The dashboard can show one
+// for KUBI_SCENE_PREVIEW_MS: API.cpp sets these, the hardware loop applies them.
+volatile int      mascotPreviewScene = -1;
+volatile uint32_t mascotPreviewAt    = 0;
+volatile int      birthdayMMDD       = 0;  // NVS "bday", 0 = not set
+
+// Tap or shake on Face 3: Kubi notices (blinks); the scene stays his choice
+static void pokeMascot() {
+  display.pokeScene();
+  audio.playChime(CHIME_TAP_FEEDBACK);
+}
+
+// --- FACE 4 ---
+bool face4Maze = false; // false = Ambient (shipping default)
 
 // --- NETWORK & TIME CONFIG ---
 const char* ntpServer          = "pool.ntp.org";
@@ -49,8 +98,8 @@ Preferences preferences;
 AsyncWebServer server(80);
 
 // --- FREERTOS TASK HANDLES ---
-TaskHandle_t TaskCore0Network;
 TaskHandle_t TaskCore1Hardware;
+TaskHandle_t TaskAudio;
 
 // --- WIFI MANAGER TCP FIX & CALLBACKS ---
 bool justSavedConfig = false;
@@ -102,14 +151,56 @@ void saveNetworkToMemory(String ssid, String pass) {
   Serial.printf("[WIFI] Saved network to memory: %s\n", ssid.c_str());
 }
 
+// Stored password for a known SSID, looked up on the device (never sent to
+// the portal page). Checks wifi_memory, then the ESP32's own saved network.
+static String nativeSsid, nativePass;
+
+String lookupSavedPassword(const String& ssid) {
+  Preferences wifiPrefs;
+  wifiPrefs.begin("wifi_memory", true);
+  int count = wifiPrefs.getInt("count", 0);
+  for (int i = 0; i < count; i++) {
+    if (wifiPrefs.getString(("ssid_" + String(i)).c_str(), "") == ssid) {
+      String p = wifiPrefs.getString(("pass_" + String(i)).c_str(), "");
+      wifiPrefs.end();
+      return p;
+    }
+  }
+  wifiPrefs.end();
+  return (ssid == nativeSsid) ? nativePass : String("");
+}
+
+// Appends s as a double-quoted JS string literal. Escapes quotes and
+// backslashes, and emits < > & and control characters as \u00XX so an SSID
+// can never close the surrounding <script> or inject markup.
+static void appendJsString(String& out, const String& s) {
+  out += '"';
+  for (size_t i = 0; i < s.length(); i++) {
+    char c = s[i];
+    if (c == '"' || c == '\\') {
+      out += '\\';
+      out += c;
+    } else if ((uint8_t)c < 0x20 || c == '<' || c == '>' || c == '&') {
+      char esc[8];
+      snprintf(esc, sizeof(esc), "\\u%04x", (uint8_t)c);
+      out += esc;
+    } else {
+      out += c;
+    }
+  }
+  out += '"';
+}
+
 void connectToWiFi() {
   Serial.println("\n[WIFI] Checking for Known Networks...");
 
   WiFiMulti wifiMulti;
 
   // 1. Add native ESP32 NVS network
-  if (WiFi.SSID().length() > 0) {
-    wifiMulti.addAP(WiFi.SSID().c_str(), WiFi.psk().c_str());
+  nativeSsid = WiFi.SSID();
+  nativePass = WiFi.psk();
+  if (nativeSsid.length() > 0) {
+    wifiMulti.addAP(nativeSsid.c_str(), nativePass.c_str());
   }
 
   // 2. Load custom multi-network credentials from Preferences
@@ -151,25 +242,34 @@ void connectToWiFi() {
 
   // 5. Fallback: Launch Kubi Captive Setup Portal
   Serial.println("\n[WIFI] No known networks in range. Initializing Kubi Setup Portal...");
-  display.drawBootScreen("Hotspot: Kubi-Setup");
+  display.drawSetupScreen();
   WiFiManager wifiManager;
 
-  // Pre-load known SSIDs into portal script
-  String jsNetworks = "<script>var savedNetworks = {";
-  wifiPrefs.begin("wifi_memory", false);
+  // Tell the portal which SSIDs Kubi already knows: names only. The hotspot is
+  // open, so passwords must never reach the page; a blank password for a known
+  // SSID is filled in on the device by lookupSavedPassword().
+  String jsNetworks = "<script>var knownNetworks=[";
+  bool first = true;
+  auto addKnown = [&](const String& s) {
+    if (s.length() == 0) return;
+    if (!first) jsNetworks += ",";
+    appendJsString(jsNetworks, s);
+    first = false;
+  };
+  wifiPrefs.begin("wifi_memory", true);
   count = wifiPrefs.getInt("count", 0);
+  bool nativeListed = false;
   for (int i = 0; i < count; i++) {
     String s = wifiPrefs.getString(("ssid_" + String(i)).c_str(), "");
-    String p = wifiPrefs.getString(("pass_" + String(i)).c_str(), "");
-    if (s.length() > 0) {
-      if (i > 0) jsNetworks += ",";
-      jsNetworks += "\"" + s + "\":\"" + p + "\"";
-    }
+    if (s == nativeSsid) nativeListed = true;
+    addKnown(s);
   }
-  jsNetworks += "};</script>";
   wifiPrefs.end();
+  if (!nativeListed) addKnown(nativeSsid);
+  jsNetworks += "];</script>";
 
   wifiManager.setCustomHeadElement(jsNetworks.c_str());
+  wifiManager.setSavedPasswordResolver(lookupSavedPassword);
   wifiManager.setSaveConfigCallback(saveConfigCallback);
   wifiManager.setConfigPortalTimeout(180); // 3 minutes timeout
 
@@ -187,6 +287,11 @@ void connectToWiFi() {
     if (newSSID.length() > 0) {
       saveNetworkToMemory(newSSID, newPass);
     }
+    // After the warm boot, show where the dashboard lives
+    Preferences kubiPrefs;
+    kubiPrefs.begin("kubi_settings", false);
+    kubiPrefs.putBool("showAddr", true);
+    kubiPrefs.end();
     Serial.println("[WIFI] Credentials saved! Warm-booting to flush TCP sockets...");
     delay(1000);
     ESP.restart();
@@ -204,10 +309,16 @@ void connectToWiFi() {
 void setupOTA() {
   ArduinoOTA.setHostname("kubi");
 
+  // These callbacks run in loop()'s task, not the hardware task: never touch
+  // the TFT here. Drawing from both tasks corrupts TFT_eSPI's shared SPI lock
+  // flag and asserts in FreeRTOS (every OTA attempt rebooted the cube).
+  // The hardware task sees otaInProgress and draws the update screen itself.
   ArduinoOTA.onStart([]() {
     Serial.println("\n--- [OTA] UPDATE STARTED ---");
-    display.drawBootScreen("OTA Updating...");
-    LittleFS.end(); // Unmount filesystem before OTA flash rewrite
+    otaInProgress = true;
+    // Only a filesystem image rewrites LittleFS; a firmware update writes
+    // the other app slot and the dashboard keeps serving meanwhile.
+    if (ArduinoOTA.getCommand() == U_SPIFFS) LittleFS.end();
   });
 
   ArduinoOTA.onEnd([]() {
@@ -220,6 +331,7 @@ void setupOTA() {
 
   ArduinoOTA.onError([](ota_error_t error) {
     Serial.printf("[OTA] Error[%u]\n", error);
+    otaInProgress = false; // back to the faces; the old firmware keeps running
   });
 
   ArduinoOTA.begin();
@@ -227,26 +339,190 @@ void setupOTA() {
 }
 
 // =============================================================================
-// CORE 0 TASK: NETWORKING & BACKGROUND SYNC
-// Handles WiFi monitoring, AsyncWebServer, and Google Calendar sync
+// FACTORY RESET
+// Erases everything Kubi knows about its owner and restarts into setup mode.
+// Runs on the hardware task (never the web server task) and does not return.
 // =============================================================================
-void core0NetworkTask(void * parameter) {
-  uint32_t lastCalendarSync = 0;
-  const uint32_t CALENDAR_SYNC_INTERVAL_MS = 3600000; // 1 Hour
+void performFactoryReset() {
+  Serial.println("[RESET] Factory reset: wiping kubi_settings, wifi_memory and stored WiFi");
+  display.setAwakeBrightness(255);
+  display.setSleep(false);
+  display.drawResetScreen();
 
-  for (;;) {
-    // 1. Maintain WiFi status
-    if (WiFi.status() != WL_CONNECTED) {
-      // Reconnection monitor
+  Preferences prefs;
+  prefs.begin("kubi_settings", false);
+  prefs.clear();
+  prefs.end();
+  prefs.begin("wifi_memory", false);
+  prefs.clear();
+  prefs.end();
+  WiFi.disconnect(true, true); // Wi-Fi off + erase the ESP32's own saved credentials
+
+  delay(2500);
+  ESP.restart();
+}
+
+// --- NAP: Kubi's "off" without a power switch ---
+// The dashboard asks for it (POST /api/nap sets napRequested; the hardware
+// loop does the rest). Screen, WiFi and sound go off and the ESP32 deep-sleeps.
+// The ADXL345 stays powered with its activity detector latching any pickup;
+// every NAP_CHECK_S the ESP32 wakes, reads that latch before anything else in
+// setup(), and goes straight back to sleep unless Kubi was moved. Its INT pin
+// is not wired, hence the polling. The amp, boost converter and DevKit keep
+// drawing a little, so a nap lasts about a week, not months.
+volatile bool napRequested = false;
+RTC_DATA_ATTR static bool napping = false;
+#define NAP_CHECK_S        2
+#define NAP_ADXL_ADDR      0x53
+#define NAP_ACT_THRESHOLD  8      // 62.5 mg/LSB: a 0.5 g change counts as being picked up
+static const gpio_num_t NAP_HOLD_PINS[] = { GPIO_NUM_32, GPIO_NUM_25, GPIO_NUM_26 }; // backlight, DAC L, DAC R
+
+static uint8_t napAdxlRead(uint8_t reg, bool& ok) {
+  Wire.beginTransmission(NAP_ADXL_ADDR);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0 || Wire.requestFrom(NAP_ADXL_ADDR, 1) != 1) { ok = false; return 0; }
+  return Wire.read();
+}
+
+static void napAdxlWrite(uint8_t reg, uint8_t value) {
+  Wire.beginTransmission(NAP_ADXL_ADDR);
+  Wire.write(reg);
+  Wire.write(value);
+  Wire.endTransmission();
+}
+
+// Backlight and both amp inputs held low while asleep: dark screen, no hiss
+[[noreturn]] static void napSleep() {
+  for (gpio_num_t p : NAP_HOLD_PINS) {
+    rtc_gpio_init(p);
+    rtc_gpio_set_direction(p, RTC_GPIO_MODE_OUTPUT_ONLY);
+    rtc_gpio_set_level(p, 0);
+    rtc_gpio_hold_en(p);
+  }
+  esp_sleep_enable_timer_wakeup((uint64_t)NAP_CHECK_S * 1000000ULL);
+  esp_deep_sleep_start();
+  for (;;) {}
+}
+
+static void releaseNapPins() {
+  for (gpio_num_t p : NAP_HOLD_PINS) {
+    rtc_gpio_hold_dis(p);
+    rtc_gpio_deinit(p);
+  }
+}
+
+// First thing in setup(): during a nap, go back to sleep unless Kubi was moved
+static void checkNap() {
+  if (napping) {
+    if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER) {
+      Wire.begin(21, 22);
+      bool ok = true;
+      uint8_t source = napAdxlRead(0x30, ok); // INT_SOURCE; reading clears the latch
+      if (ok && !(source & 0x10)) napSleep();  // no activity: keep napping
     }
+    napping = false; // picked up (or the sensor did not answer): wake properly
+  }
+  releaseNapPins();
+}
 
-    // 2. Background Google Calendar iCal worker
-    if (secretIcalUrl.length() > 0 && (millis() - lastCalendarSync > CALENDAR_SYNC_INTERVAL_MS || lastCalendarSync == 0)) {
-      lastCalendarSync = millis();
-      Serial.println("[CALENDAR] Hourly sync triggered");
+static void enterNap() {
+  Serial.println("[NAP] Good night: sleeping until picked up");
+  display.requestWake();
+  display.drawBootScreen("Good night!");
+  audio.playChime(CHIME_TAP_FEEDBACK);
+  vTaskDelay(pdMS_TO_TICKS(1500));
+
+  bool ok = true;
+  napAdxlWrite(0x24, NAP_ACT_THRESHOLD);                // THRESH_ACT
+  napAdxlWrite(0x27, 0xF0);                             // ACT_INACT_CTL: AC-coupled, X Y Z
+  napAdxlWrite(0x2E, napAdxlRead(0x2E, ok) | 0x10);     // INT_ENABLE: activity
+  napAdxlRead(0x30, ok);                                // clear whatever latched so far
+
+  display.powerDown();
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  napping = true;
+  Serial.flush();
+  napSleep();
+}
+
+// --- BATTERY ---
+// GPIO 34 (ADC1, so it works alongside WiFi) reads the cell through R1/R2.
+#define BATTERY_SENSE_PIN   34
+#define BATTERY_READ_MS     2000
+// Smoothing, charging detection and the time estimate: BatteryMonitor (Battery.h)
+static BatteryMonitor battery;
+volatile int batteryStateCode   = BATTERY_DRAINING; // BatteryState, for the API
+volatile int batteryMinutesLeft = -1;
+// Charge reminders (NVS "alertHi"/"alertLo", 0 = off): Kubi chimes and shows
+// a banner once per charge or discharge. The charger itself always fills to 100%.
+volatile int chargeAlertHigh = 0;
+volatile int chargeAlertLow  = 0;
+
+static float readBatteryVolts() {
+  uint32_t mv = 0;
+  for (int i = 0; i < 32; i++) mv += analogReadMilliVolts(BATTERY_SENSE_PIN);
+  return (mv / 32.0f) / 1000.0f / BATTERY_DIVIDER_RATIO;
+}
+
+static void batteryReminder(const char* text) {
+  setOverrideText(text);
+  isScreenOverrideActive = true; // tap dismisses it, like any banner
+  display.requestWake();
+  audio.playChime(CHIME_WAKE_PING);
+  Serial.printf("[BATTERY] %s\n", text);
+}
+
+static void updateBattery() {
+  static bool highDone = false, lowDone = false;
+  static BatteryState lastState = BATTERY_DRAINING;
+
+  battery.update(readBatteryVolts(), millis());
+  batteryVoltage = battery.voltage();
+  batteryPercentage = battery.percent();
+  batteryStateCode = battery.state();
+  batteryMinutesLeft = battery.minutesLeft();
+
+  // Keep the learned drain/charge rates across restarts (NVS "drainRate",
+  // "chargeRate"), checked every 10 minutes and written only when one moved by
+  // more than 0.05 %/h (a few writes a day once it has settled)
+  static uint32_t lastRateSave = 0;
+  static float savedDrain = -1, savedCharge = -1;
+  if (savedDrain < 0) {
+    savedDrain = battery.learnedDrainPerHour(); // what setup() loaded from NVS
+    savedCharge = battery.learnedChargePerHour();
+  }
+  if (millis() - lastRateSave >= 10UL * 60UL * 1000UL) {
+    lastRateSave = millis();
+    float d = battery.learnedDrainPerHour(), c = battery.learnedChargePerHour();
+    if (fabsf(d - savedDrain) > 0.05f || fabsf(c - savedCharge) > 0.05f) {
+      Preferences prefs;
+      prefs.begin("kubi_settings", false);
+      prefs.putFloat("drainRate", d);
+      prefs.putFloat("chargeRate", c);
+      prefs.end();
+      savedDrain = d;
+      savedCharge = c;
+      Serial.printf("[BATTERY] Learned rates saved: drain %.2f %%/h, charge %.2f %%/h\n", d, c);
     }
+  }
 
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
+  BatteryState st = battery.state();
+  if (st != lastState) {
+    if (st == BATTERY_DRAINING) highDone = false; // unplugged: arm the unplug reminder for next time
+    else lowDone = false;                         // plugged in: arm the low reminder
+    lastState = st;
+  }
+  char msg[48];
+  if (chargeAlertHigh > 0 && st != BATTERY_DRAINING && !highDone && batteryPercentage >= chargeAlertHigh) {
+    highDone = true;
+    snprintf(msg, sizeof(msg), "Battery %d%% - unplug me!", batteryPercentage);
+    batteryReminder(msg);
+  }
+  if (chargeAlertLow > 0 && st == BATTERY_DRAINING && !lowDone && batteryPercentage <= chargeAlertLow) {
+    lowDone = true;
+    snprintf(msg, sizeof(msg), "Battery %d%% - plug me in!", batteryPercentage);
+    batteryReminder(msg);
   }
 }
 
@@ -257,14 +533,42 @@ void core0NetworkTask(void * parameter) {
 void core1HardwareTask(void * parameter) {
   uint32_t lastRenderTime = 0;
   uint32_t lastPomoTick   = 0;
+  uint32_t lastBatteryRead = 0;
+  uint32_t lastMotionSeen = 0;
   int previousFace = -1;
+  bool mazeWasActive = false;
+  bool mazeWasLocked = false;
+  bool otaScreenShown = false;
 
   for (;;) {
     uint32_t now = millis();
 
-    // 1. Poll Sensors & Audio Engine
+    if (factoryResetRequested) {
+      performFactoryReset();
+    }
+    if (napRequested) {
+      enterNap(); // does not return
+    }
+
+    // A WiFi update is being written (see setupOTA): show it and pause the
+    // faces. Success reboots; an error clears the flag and the faces return.
+    if (otaInProgress) {
+      if (!otaScreenShown) {
+        display.requestWake();
+        display.drawBootScreen("Updating...");
+        otaScreenShown = true;
+      }
+      display.loop(); // backlight fade-in if it was asleep
+      vTaskDelay(pdMS_TO_TICKS(20));
+      continue;
+    }
+    if (otaScreenShown) {
+      otaScreenShown = false;
+      display.invalidate();
+    }
+
+    // 1. Poll Sensors & Display (audio runs in its own task)
     sensors.loop();
-    audio.loop();
     display.loop();
 
     // 2. Second-by-second Pomodoro Countdown Tick
@@ -276,6 +580,11 @@ void core1HardwareTask(void * parameter) {
     // 3. Read live telemetry
     sensors.getAcceleration((float&)diagAccelX, (float&)diagAccelY, (float&)diagAccelZ);
     roomTemperature = sensors.getTemperature();
+    roomPressure = sensors.getPressure();
+    if (lastBatteryRead == 0 || now - lastBatteryRead >= BATTERY_READ_MS) {
+      lastBatteryRead = now;
+      updateBattery();
+    }
 
     // 4. Orientation / Face Up State Machine
     int activeFace = sensors.getActiveFace();
@@ -288,24 +597,48 @@ void core1HardwareTask(void * parameter) {
           activeFace + 1,
           activeFace == 0 ? "Face 1 (Clock Idle)" :
           activeFace == 1 ? "Face 2 (Pomodoro Timer)" :
-          activeFace == 2 ? "Face 3 (Mascot & Temp)" : "Face 4 (Schedule Agenda)"
+          activeFace == 2 ? "Face 3 (Mascot & Temp)" : "Face 4 (Ambient)"
         );
 
-        clockShowDetails = false;
         sensors.getRecentGesture(); // Flush any transient gesture during orientation transition
+        display.noteActivity();
       }
+    }
+
+    // Keep rotation in sync with currentMode, which the dashboard can also
+    // change. No-op unless it differs; TFT access stays on this core.
+    display.setRotationForFace((int)currentMode);
+
+    // Entering the maze face starts the current board afresh
+    bool mazeActive = mazeFaceActive(currentMode);
+    if (mazeActive && !mazeWasActive) maze.begin();
+    mazeWasActive = mazeActive;
+    // Face lock while playing: leaving needs a 2 s hold on another face, and
+    // the maze lets go by itself after MAZE_IDLE_UNLOCK_MS without input.
+    bool mazeLocked = mazeActive && maze.isPlaying(now);
+    sensors.setFaceSettleTime(mazeLocked ? FACE_SETTLE_LOCKED : FACE_SETTLE_MS);
+    if (mazeLocked != mazeWasLocked) {
+      Serial.printf("[MAZE] Face lock %s\n", mazeLocked ? "on" : "off");
+      mazeWasLocked = mazeLocked;
+    }
+    if (mazeActive) {
+      float ax, ay, az;
+      sensors.getAcceleration(ax, ay, az);
+      maze.update(ax, ay, az, now);
     }
 
     // 5. Gesture Handling (Streamlined: Tap = Dismiss/Pause/Play, Shake = Skip)
     KubiGesture gesture = sensors.getRecentGesture();
     if (gesture != GESTURE_NONE) {
-      if (display.isSleeping()) {
-        display.wakeScreen();
-        audio.playChime(CHIME_WAKE_PING);
+      if (display.noteActivity()) {
+        // Gesture only woke the screen: swallow it, silently (it may be night)
       } else {
         switch (gesture) {
           case GESTURE_TAP:
-            if (isScreenOverrideActive) {
+            if (addressScreenUntil) {
+              addressScreenUntil = 0; // Owner has the address: back to the faces
+              audio.playChime(CHIME_TAP_FEEDBACK);
+            } else if (isScreenOverrideActive) {
               isScreenOverrideActive = false; // Dismiss override
               audio.playChime(CHIME_TAP_FEEDBACK);
             } else if (currentMode == MODE_POMODORO) {
@@ -313,14 +646,10 @@ void core1HardwareTask(void * parameter) {
               pomodoro.handleTap();
             } else if (currentMode == MODE_CLOCK_IDLE) {
               audio.playChime(CHIME_TAP_FEEDBACK);
-            } else if (currentMode == MODE_SCHEDULE_AGENDA) {
-              schedule.handleTap();
-              audio.playChime(CHIME_TAP_FEEDBACK);
+            } else if (currentMode == MODE_AMBIENT && !face4Maze) {
+              ambient.nextColour(); // silent: this face is for dark rooms
             } else if (currentMode == MODE_MASCOT_ROUTINE) {
-              // Tap: Next scene
-              mascotSceneIndex = (mascotSceneIndex + 1) % 10;
-              audio.playChime(CHIME_TAP_FEEDBACK);
-              Serial.printf("[MASCOT] Tap -> Next scene: %d\n", mascotSceneIndex);
+              pokeMascot();
             }
             break;
 
@@ -335,15 +664,8 @@ void core1HardwareTask(void * parameter) {
               preferences.end();
               audio.playChime(CHIME_TAP_FEEDBACK);
               Serial.printf("[CLOCK] Shake detected -> Switched to %s clock view (saved to NVS)\n", clockAnalogView ? "analog" : "digital");
-            } else if (currentMode == MODE_SCHEDULE_AGENDA) {
-              schedule.handleShake();
-              audio.playChime(CHIME_TAP_FEEDBACK);
-              Serial.println("[SCHEDULE] Shake detected -> Jumped to today");
             } else if (currentMode == MODE_MASCOT_ROUTINE) {
-              // Shake: Previous scene
-              mascotSceneIndex = (mascotSceneIndex - 1 + 10) % 10;
-              audio.playChime(CHIME_TAP_FEEDBACK);
-              Serial.printf("[MASCOT] Shake -> Prev scene: %d\n", mascotSceneIndex);
+              pokeMascot();
             }
             break;
 
@@ -358,22 +680,34 @@ void core1HardwareTask(void * parameter) {
       }
     }
 
-    // Auto collapse clock details
-    if (clockShowDetails && now > clockDetailsTimeout) {
-      clockShowDetails = false;
+    // 5b. Inactivity sleep: any movement wakes silently; only some faces sleep
+    uint32_t motionTime = sensors.getLastMotionTime();
+    if (motionTime != lastMotionSeen) {
+      lastMotionSeen = motionTime;
+      display.noteActivity();
     }
+    if (addressScreenUntil && (int32_t)(now - addressScreenUntil) >= 0) {
+      addressScreenUntil = 0;
+    }
+    bool bannerUp = isScreenOverrideActive || addressScreenUntil;
+    display.setSleepAllowed(modeMaySleep(currentMode) && !bannerUp);
+    display.setAwakeBrightness(currentMode == MODE_AMBIENT && !face4Maze && !bannerUp ? AmbientFace::BACKLIGHT : 255);
 
     // 6. Display Rendering (~20Hz tick)
-    if (now - lastRenderTime >= 50 && !display.isSleeping()) {
+    uint32_t renderTick = mazeActive ? RENDER_TICK_MAZE_MS : RENDER_TICK_MS;
+    if (now - lastRenderTime >= renderTick && !display.isSleeping()) {
       lastRenderTime = now;
 
       if (isScreenOverrideActive) {
-        display.drawOverrideAlert(screenOverrideText);
+        display.drawOverrideAlert(getOverrideText());
+      } else if (addressScreenUntil) {
+        display.drawAddressScreen(addressScreenIp);
       } else {
         struct tm timeinfo;
         int currentHour = 12, currentMin = 0;
         int currentWday = 4, currentMday = 3, currentMon = 8;
-        if (getLocalTime(&timeinfo)) {
+        bool timeValid = getLocalTime(&timeinfo);
+        if (timeValid) {
           currentHour = timeinfo.tm_hour;
           currentMin = timeinfo.tm_min;
           currentWday = timeinfo.tm_wday;
@@ -381,9 +715,20 @@ void core1HardwareTask(void * parameter) {
           currentMon = timeinfo.tm_mon;
         }
 
+        // Kubi's scene pick, kept current on every face so the dashboard can show it
+        if (mascotPreviewScene >= 0 && now - mascotPreviewAt < KUBI_SCENE_PREVIEW_MS) {
+          mascotSceneIndex = mascotPreviewScene;
+        } else {
+          mascotPreviewScene = -1;
+          if (timeValid) {
+            mascotSceneIndex = kubiScheduledScene(currentMon, currentMday, currentWday, currentHour, currentMin,
+                                                  roomTemperature, birthdayMMDD);
+          }
+        }
+
         switch (currentMode) {
           case MODE_CLOCK_IDLE:
-            display.drawClockFace(currentHour, currentMin, currentWday, currentMday, currentMon, clockShowDetails, clockAnalogView, "Design Review 14:00", "^ AAPL +1.2% | BTC $92k");
+            display.drawClockFace(currentHour, currentMin, currentWday, currentMday, currentMon, clockAnalogView);
             break;
 
           case MODE_POMODORO:
@@ -403,8 +748,9 @@ void core1HardwareTask(void * parameter) {
             display.drawMascotFace(roomTemperature, currentHour, mascotSceneIndex, true);
             break;
 
-          case MODE_SCHEDULE_AGENDA:
-            display.drawScheduleFace(schedule.getCurrentDayTitle(), schedule.getCurrentPageItems(), schedule.hasIcs(), schedule.hasEvents());
+          case MODE_AMBIENT:
+            if (face4Maze) display.drawMazeFace();
+            else display.drawAmbientFace();
             break;
 
           default:
@@ -418,14 +764,37 @@ void core1HardwareTask(void * parameter) {
 }
 
 // =============================================================================
+// AUDIO TASK
+// Feeds the I2S DMA queue. pump() blocks (1 ms yields) while the queue is
+// full, so this task is paced by the 22,050 Hz sample clock rather than by the
+// 10 ms hardware loop, which could only supply ~29% of the samples needed.
+// =============================================================================
+void audioTask(void * parameter) {
+  for (;;) {
+    if (!audio.pump()) {
+      vTaskDelay(5 / portTICK_PERIOD_MS); // idle: poll for the next chime request
+    }
+  }
+}
+
+// =============================================================================
 // ARDUINO SETUP
 // =============================================================================
 void setup() {
+  checkNap(); // before anything else: a nap check must be quick
   Serial.begin(115200);
   delay(500);
   Serial.println("\n=================================");
   Serial.println("       PROJECT KUBI BOOTING      ");
   Serial.println("=================================");
+
+  // A crash writes a core dump to the coredump partition; it stays until the
+  // next crash overwrites it. Decode steps are in AGENTS.md.
+  size_t dumpAddr = 0, dumpSize = 0;
+  if (esp_core_dump_image_get(&dumpAddr, &dumpSize) == ESP_OK) {
+    Serial.printf("[CRASH] A core dump from an earlier crash is stored (%u bytes at 0x%X)\n",
+                  (unsigned)dumpSize, (unsigned)dumpAddr);
+  }
 
   // 1. Initialize Hardware Drivers & Managers
   display.init();
@@ -433,6 +802,9 @@ void setup() {
 
   sensors.init();
   audio.init();
+  // Start audio immediately so the boot chime plays during WiFi connect.
+  // Priority 2 on core 1: above the hardware loop, it sleeps in the DMA wait.
+  xTaskCreatePinnedToCore(audioTask, "Audio", 3072, NULL, 2, &TaskAudio, 1);
   pomodoro.init();
 
   // Play power-up chime
@@ -465,10 +837,23 @@ void setup() {
 
   // 7. Load Persistent Settings from NVS
   preferences.begin("kubi_settings", false);
-  secretIcalUrl   = preferences.getString("icalUrl", "");
   tzOffset        = preferences.getInt("tzOffset", 2);
   clockAnalogView = preferences.getBool("clockAnalog", false);
+  birthdayMMDD = preferences.getInt("bday", 0);
+  chargeAlertHigh = preferences.getInt("alertHi", 0);
+  chargeAlertLow = preferences.getInt("alertLo", 0);
+  battery.setLearnedRates(preferences.getFloat("drainRate", 0.0f), preferences.getFloat("chargeRate", 0.0f));
+  face4Maze       = preferences.getBool("face4Maze", false);
+  display.setSleepTimeoutMinutes(preferences.getInt("sleepMin", 5));
+  audio.setVolume(preferences.getInt("volume", 25) / 100.0f); // dashboard "Sound"
+  bool firstConnect = preferences.getBool("showAddr", false);
+  if (firstConnect) preferences.remove("showAddr");
+  // Retired with the calendar face (TSK-422): drop leftovers from older firmware
+  preferences.remove("icalUrl");
   preferences.end();
+  if (LittleFS.exists("/calendar.ics")) {
+    LittleFS.remove("/calendar.ics");
+  }
 
   // 8. Sync Clock via NTP
   display.drawBootScreen("Syncing Time...");
@@ -478,21 +863,23 @@ void setup() {
     Serial.println("[NTP] Time successfully synchronized.");
   }
 
-  // 9. Initialize Schedule Manager
-  schedule.init();
-
   // 9. Attach REST API Routes & Start Web Server
   setupAPIRoutes(server);
   server.begin();
   Serial.println("[HTTP] AsyncWebServer listening on port 80");
 
-  display.drawBootScreen("Kubi Ready!");
-  delay(500);
+  String ip = WiFi.localIP().toString();
+  if (firstConnect) {
+    addressScreenIp = ip;
+    addressScreenUntil = millis() + ADDRESS_SCREEN_MS;
+  }
+  display.drawBootScreen("Ready at " + ip);
+  delay(1500);
 
-  // 10. Launch Dual-Core FreeRTOS Tasks
-  xTaskCreatePinnedToCore(core0NetworkTask,  "Core0Network",  10000, NULL, 1, &TaskCore0Network,  0);
+  // 10. Launch the hardware/UI task. Networking runs in the WiFi and AsyncTCP
+  // tasks on core 0; audio has its own task (started above).
   xTaskCreatePinnedToCore(core1HardwareTask, "Core1Hardware", 10000, NULL, 1, &TaskCore1Hardware, 1);
-  Serial.println("[RTOS] Dual-core workers initialized.");
+  Serial.println("[RTOS] Hardware task started.");
 }
 
 // =============================================================================
