@@ -96,33 +96,78 @@ public:
             if (_state == BATTERY_DRAINING && _histCount >= 10 && _slow - vAgo(9) > 0.03f) {
                 setState(BATTERY_CHARGING, nowMs);
             }
+            learn();
         }
     }
+
+    // --- Learned rates (percent per hour) ---
+    // A slow average of every half-hour trend this cube has seen, kept in NVS
+    // by the caller, so an estimate is there straight after a restart and
+    // one busy hour hardly moves it. 0 = nothing learned yet.
+    void setLearnedRates(float drainPerHour, float chargePerHour) {
+        if (drainPerHour >= MIN_DRAIN && drainPerHour <= MAX_DRAIN) _drainPerHour = drainPerHour;
+        if (chargePerHour >= MIN_CHARGE && chargePerHour <= MAX_CHARGE) _chargePerHour = chargePerHour;
+    }
+    float learnedDrainPerHour() const { return _drainPerHour; }
+    float learnedChargePerHour() const { return _chargePerHour; }
 
     float voltage() const { return _slow; }
     int percent() const { return _shown; }
     BatteryState state() const { return _state; }
 
-    // Minutes to empty (draining) or to full (charging); -1 while it can't tell yet
+    // Minutes to empty (draining) or to full (charging); -1 while it can't tell yet.
+    // The learned rate carries the estimate; the last half hour can move it
+    // by up to half once there is enough of it.
     int minutesLeft() const {
         if (_state == BATTERY_FULL) return 0;
-        int k = _histCount - 1;
-        if (k > 30) k = 30;
-        if (k < 10) return -1;
-        float rate = (_hist[idx(0)] - _hist[idx(k)]) / k; // percent per minute
-        float left;
-        if (_state == BATTERY_DRAINING) {
-            if (rate > -0.005f) return -1;
-            left = _exact / -rate;
+        bool draining = _state == BATTERY_DRAINING;
+        float learned = draining ? _drainPerHour : _chargePerHour;
+        int k;
+        float live = liveRatePerHour(k);
+        float rate;
+        if (learned > 0 && live > 0) {
+            float w = (k > 30 ? 30 : k) / 60.0f;
+            rate = learned * (1.0f - w) + live * w;
+        } else if (learned > 0) {
+            rate = learned;
+        } else if (live > 0) {
+            rate = live;
         } else {
-            if (rate < 0.01f) return -1;
-            left = (100.0f - _exact) / rate;
+            return -1;
         }
+        float left = (draining ? _exact : 100.0f - _exact) / rate * 60.0f;
         return left > 5999.0f ? 5999 : (int)left;
     }
 
 private:
     static const int HIST = 32;
+    // Plausible bounds for this cube (5.2 Ah pack, ~0.3 A load, ~1 A charger)
+    static constexpr float MIN_DRAIN = 0.3f, MAX_DRAIN = 50.0f;
+    static constexpr float MIN_CHARGE = 1.0f, MAX_CHARGE = 100.0f;
+    static constexpr float LEARN_WEIGHT = 0.01f; // per minute: ~1.7 h memory
+    float _drainPerHour = 0, _chargePerHour = 0;
+
+    // Trend over up to the last 30 minutes in the current direction, percent
+    // per hour (positive); 0 if there are under 10 minutes or it points the
+    // wrong way. k = minutes used.
+    float liveRatePerHour(int& k) const {
+        k = _histCount - 1;
+        if (k > 30) k = 30;
+        if (k < 10 || _state == BATTERY_FULL) return 0;
+        float perMin = (_hist[idx(0)] - _hist[idx(k)]) / k;
+        float perHour = (_state == BATTERY_DRAINING ? -perMin : perMin) * 60.0f;
+        float lo = _state == BATTERY_DRAINING ? MIN_DRAIN : MIN_CHARGE;
+        float hi = _state == BATTERY_DRAINING ? MAX_DRAIN : MAX_CHARGE;
+        return (perHour >= lo && perHour <= hi) ? perHour : 0;
+    }
+
+    void learn() {
+        int k;
+        float live = liveRatePerHour(k);
+        if (live <= 0 || k < 30) return; // only full half hours teach it
+        float& learned = _state == BATTERY_DRAINING ? _drainPerHour : _chargePerHour;
+        learned = learned > 0 ? learned + LEARN_WEIGHT * (live - learned) : live;
+    }
     bool _init = false, _resync = false;
     float _fast = 0, _slow = 0, _exact = 100;
     int _shown = 100;

@@ -396,6 +396,30 @@ static void updateBattery() {
   batteryStateCode = battery.state();
   batteryMinutesLeft = battery.minutesLeft();
 
+  // Keep the learned drain/charge rates across restarts (NVS "drainRate",
+  // "chargeRate"), checked every 10 minutes and written only when one moved by
+  // more than 0.05 %/h (a few writes a day once it has settled)
+  static uint32_t lastRateSave = 0;
+  static float savedDrain = -1, savedCharge = -1;
+  if (savedDrain < 0) {
+    savedDrain = battery.learnedDrainPerHour(); // what setup() loaded from NVS
+    savedCharge = battery.learnedChargePerHour();
+  }
+  if (millis() - lastRateSave >= 10UL * 60UL * 1000UL) {
+    lastRateSave = millis();
+    float d = battery.learnedDrainPerHour(), c = battery.learnedChargePerHour();
+    if (fabsf(d - savedDrain) > 0.05f || fabsf(c - savedCharge) > 0.05f) {
+      Preferences prefs;
+      prefs.begin("kubi_settings", false);
+      prefs.putFloat("drainRate", d);
+      prefs.putFloat("chargeRate", c);
+      prefs.end();
+      savedDrain = d;
+      savedCharge = c;
+      Serial.printf("[BATTERY] Learned rates saved: drain %.2f %%/h, charge %.2f %%/h\n", d, c);
+    }
+  }
+
   BatteryState st = battery.state();
   if (st != lastState) {
     if (st == BATTERY_DRAINING) highDone = false; // unplugged: arm the unplug reminder for next time
@@ -727,6 +751,7 @@ void setup() {
   birthdayMMDD = preferences.getInt("bday", 0);
   chargeAlertHigh = preferences.getInt("alertHi", 0);
   chargeAlertLow = preferences.getInt("alertLo", 0);
+  battery.setLearnedRates(preferences.getFloat("drainRate", 0.0f), preferences.getFloat("chargeRate", 0.0f));
   face4Maze       = preferences.getBool("face4Maze", false);
   display.setSleepTimeoutMinutes(preferences.getInt("sleepMin", 5));
   audio.setVolume(preferences.getInt("volume", 25) / 100.0f); // dashboard "Sound"
