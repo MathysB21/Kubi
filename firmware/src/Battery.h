@@ -69,24 +69,33 @@ public:
             }
         }
 
-        // The charger lifts the reading while it pushes current in
+        // The charger lifts the reading while it pushes current in: ~0.08 V on
+        // this pack (2026-11-11: it read 92 % on charge and settled to 87 %)
         float exact = _state == BATTERY_FULL ? 100.0f
-                    : batteryPercentFromVoltsExact(_slow - (_state == BATTERY_CHARGING ? 0.04f : 0.0f));
+                    : batteryPercentFromVoltsExact(_slow - (_state == BATTERY_CHARGING ? 0.08f : 0.0f));
         _exact = exact;
 
         // Like a phone: draining only counts down, charging only counts up,
-        // and only once the average is clearly past the next whole number
+        // and only once the average is clearly past the next whole number.
+        // After a plug-in or unplug the shown value eases over to the new
+        // reading, a point every 2 minutes at most, instead of jumping.
         if (_resync) {
-            if (fabsf(exact - _shown) >= 0.7f) _shown = (int)(exact + 0.5f);
-            if (nowMs - _stateSince > 10UL * 60UL * 1000UL) _resync = false;
+            if (fabsf(exact - _shown) >= 0.7f && nowMs - _lastEase >= 2UL * 60UL * 1000UL) {
+                _shown += exact > _shown ? 1 : -1;
+                _lastEase = nowMs;
+            }
+            if (nowMs - _stateSince > 20UL * 60UL * 1000UL) _resync = false;
         } else if (_state == BATTERY_DRAINING) {
             if (exact <= _shown - 0.7f) _shown = (int)(exact + 0.5f);
         } else if (exact >= _shown + 0.7f) {
             _shown = (int)(exact + 0.5f);
         }
 
-        // One sample a minute for the trend and the time estimate
-        if (nowMs - _minuteStart >= 60000UL) {
+        // One sample a minute for the trend and the time estimate. Not while
+        // the slow average is still absorbing a plug-in/unplug step: those
+        // minutes look like a very fast charge (seen 2026-11-11: "full in
+        // 17 min" at 79 %, really about an hour).
+        if (nowMs - _minuteStart >= 60000UL && (int32_t)(nowMs - _settleUntil) >= 0) {
             _minuteStart = nowMs;
             _hist[_histHead] = exact;
             _vhist[_histHead] = _slow;
@@ -146,6 +155,8 @@ private:
     static constexpr float MIN_CHARGE = 1.0f, MAX_CHARGE = 100.0f;
     static constexpr float LEARN_WEIGHT = 0.01f; // per minute: ~1.7 h memory
     float _drainPerHour = 0, _chargePerHour = 0;
+    static const uint32_t SETTLE_MS = 10UL * 60UL * 1000UL; // ~3 time constants of the slow average
+    uint32_t _settleUntil = 0, _lastEase = 0;
 
     // Trend over up to the last 30 minutes in the current direction, percent
     // per hour (positive); 0 if there are under 10 minutes or it points the
@@ -182,6 +193,7 @@ private:
     void setState(BatteryState s, uint32_t nowMs) {
         _state = s;
         _stateSince = nowMs;
+        _settleUntil = nowMs + SETTLE_MS;
         _highSince = 0;
         _histCount = 0;  // the old trend says nothing about the new direction
         _resync = true;  // let the shown percent follow the reading for a while
