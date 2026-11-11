@@ -1,6 +1,6 @@
 # Kubi Assembly Guide
 
-Step-by-step soldering and assembly for the 90 mm cube. Hole positions (D2, A14-H14, S6, ...) are the coordinates printed on the perfboard (column letter A-T, row number 01-14) and refer to the perfboard plan in `Kubi Architecture and Wiring Guide.md`, section 5. Work through the stages in order: each one ends with a check, so a mistake is caught before the next stage builds on it.
+Step-by-step soldering and assembly for the 90 mm cube. Hole positions (D2, A14-H14, S6, ...) are the coordinates printed on the perfboard (component side, column letter A-T, row number 01-14) and refer to the perfboard plan in `Kubi Architecture and Wiring Guide.md`, section 5. Work through the stages in order: each one ends with a check, so a mistake is caught before the next stage builds on it.
 
 ## Before you start
 
@@ -30,7 +30,7 @@ Check: cells in, MT3608 output reads 5.0-5.1 V, the SENSE wire reads about half 
 
 ## Stage 2: Perfboard
 
-Orientation: use the coordinates printed on the board. Printed side up, column A on the left, row 01 at the bottom. When you turn it over to solder, turn it side to side like a page, so row 01 stays at the bottom; the letters then read T to A from left to right, so double-check every letter on that side.
+Orientation: use the coordinates printed on the component side (the ESP32 side), column A on the left, row 01 at the bottom. Every hole name in this guide is the component-side one. The solder side has its own printed letters that name different holes: turned over side to side like a page, row 01 stays at the bottom and they still read A to T from left to right, so each column has a different letter on each side (A and T swap, B and S, C and R, D and Q, E and P, F and O, G and N, H and M, I and L, J and K). The Wire by wire view in the build viewer shows the solder-side names.
 
 After every joint or wire, beep it against its neighbours. Each step below ends with the pairs that must stay silent.
 
@@ -44,12 +44,11 @@ After every joint or wire, beep it against its neighbours. Each step below ends 
    2. 3.3 V: O12-M14, then M14-A14 along row 13. Only one wire on O12, because N12 next to it is GND. O12-N12, M14-L14, A14-B14, O12-N2 and O12-O2 silent.
    3. Screen: A12-C14, G12-D14, H12-E14, L12-F14, K12-G14, F2-H14. These cross the row-13 ground wire: solder at the tip of each stub and keep the iron off the ground wire. Beep each one against GND straight away.
    4. IMU: E12-J14 (SDA), B12-K14 (SCL).
-   5. Audio: H2-O14, I2-P14.
-   Strip 2-3 mm, tin the end, keep wires flat against the board, and keep them away from the antenna end (column A).
+   Strip 2-3 mm, tin the end, keep wires flat against the board, and keep them away from the antenna end (column A). Every screen and IMU wire has to cross the ground and 3.3 V wires in row 13: cross them at right angles, where the pile is lowest, and never lay a wire along the top of another. There are about 4 mm behind the board on its pads; if the crossings stack higher, mount the board on 2.5-3 mm spacers (see stage 4).
 7. Outside wires (soldered straight into the board, ~12 cm, labelled with tape). Each one goes through its hole first; then solder the board wire to its end on the solder side:
    - S2 "5V IN" and T2 "GND IN" (go to the MT3608 later), then O2-S2 and N2-T2
    - S4 "AMP 5V", T4 "AMP GND", then S2-S4 and T2-T4
-   - O14 "AMP L", P14 "AMP R", Q14 "AMP G", then L14-Q14
+   - O14 "AMP L", P14 "AMP R", Q14 "AMP G", then H2-O14 (D25), I2-P14 (D26) and T4-Q14 (up the empty column T, so it stays off the wires crossing row 13)
    - S6: the SENSE wire from R1, then D2-S6
 8. Optional bulk capacitor: if you have an electrolytic of 100-470 µF rated 10 V or more, add it across 5 V and GND near S2/T2, lying on its side (the stripe marks -). It helps against brownouts during WiFi bursts. Skip the small capacitor on the sense node: with 10 kΩ it is not needed, and an electrolytic is too tall to sit under the ESP32.
 
@@ -87,7 +86,7 @@ Check with the ESP32 out of its sockets, multimeter on continuity/resistance:
 
 1. Front: screen into its window (cable towards the inside), speakers into their grille pockets either side, facing out.
 2. Battery holder behind the screen, centred, 78 mm side to side. Route the screen cable around it.
-3. Perfboard onto its pads on the mid-plate, component side towards the back, row 14 (screen and IMU headers) towards the top on Face 1, away from the TP4056. Glue it a millimetre or two away from the top so the flat IMU clears the top panel (the panels have pockets for it). It must not be able to move: the IMU on it decides which face is up.
+3. Perfboard onto its pads on the mid-plate, component side towards the back, row 14 (screen and IMU headers) towards the top on Face 1, away from the TP4056. Glue it a millimetre or two away from the top so the flat IMU clears the top panel (the panels have pockets for it). The pads leave 4 mm behind the board (about 2.5 mm where the zip ties cross, under columns A-C and R-T). If the wires on the back stack higher, put a 2.5-3 mm spacer under each corner, such as the plastic strip from a bit of male header with the pins pulled out: the IMU stays inside its panel pockets up to about 3 mm extra, and the ESP32 still clears the amp knob. It must not be able to move: the IMU on it decides which face is up.
 4. Back wall: TP4056 with its USB-C in the slot, MT3608, PAM8403 (knob already set). Tape over the underside of each module wherever it could touch another part or wire.
 5. Strain relief: a dab of hot glue where each wire leaves a solder joint, and on the speaker leads.
 6. Close it up, power on, and check every face rolls to the right screen.

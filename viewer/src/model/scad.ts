@@ -32,6 +32,15 @@ export function parseHole(ref: string): { col: number; row: number } {
   return { col: COL_LETTERS.indexOf(ref[0]) + 1, row: Number(ref.slice(1)) };
 }
 
+// The back of the board has its own printed letters: turned over like a page,
+// they still read A-T from left to right, so each column has a different letter
+// on each side (A and T swap, B and S, ...). Rows match. Every name in the model
+// is the component-side one; this gives what is printed beside that hole on the back.
+export function backHole(ref: string): string {
+  const h = parseHole(ref);
+  return `${COL_LETTERS[COLS - h.col]}${h.row}`;
+}
+
 export function holePos(ref: string, z: number): Vec3 {
   const h = parseHole(ref);
   return [holeX(h.col), holeY(h.row), z];

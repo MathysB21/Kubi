@@ -216,7 +216,7 @@ Route the screen cable around the battery holder (there is ~21 mm above and belo
 
 5. Perfboard (40 x 60 mm, 14 x 20 holes)
 
-Holes are named by the coordinates printed on the board: columns A-T along the 60 mm side, rows 01-14 along the 40 mm side, so "O12" is column O, row 12. Component side (the printed side) up, column A on the left, row 01 at the bottom:
+Holes are named by the coordinates printed on the board: columns A-T along the 60 mm side, rows 01-14 along the 40 mm side, so "O12" is column O, row 12. Component side (the ESP32 side) up, column A on the left, row 01 at the bottom:
 
 ```
         A  B  C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T
@@ -236,7 +236,7 @@ Holes are named by the coordinates printed on the board: columns A-T along the 6
    01   .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
 ```
 
-When you turn the board over to solder, turn it side to side like a page: row 01 stays at the bottom, and the letters then run T to A from left to right.
+The solder side has coordinates printed on it too, and its letters name different holes. Turned over side to side like a page, row 01 stays at the bottom and the printed letters still read A to T from left to right, so each column has a different letter on each side (A and T swap, B and S, C and R, D and Q, E and P, F and O, G and N, H and M, I and L, J and K). Every hole name in this guide is the component-side one. Row numbers match on both sides. The Wire by wire view in the build viewer uses the solder-side names.
 
 - ESP32: two 15-way female headers (cut down from longer strips), pins in columns A-O, antenna end at column A hanging off the board edge, USB-C end towards column O. Rows 02 and 12: the two pin rows are 10 holes (25.4 mm) apart, measured on the board in use. With the chip facing up and the antenna on the left, the EN ... VIN row is the one nearest you, so it goes in row 02. The ESP32's PCB overhangs to about column R at the USB end and reaches about halfway to rows 01 and 13, so nothing tall goes in columns P-R or under it.
 - Socket pin order, column A to O, confirmed against the pinout of the board in use (30-pin ESP32 DevKit, ESP32-D0WD-V3 module, CH340 USB-C):
@@ -258,7 +258,7 @@ Wires on the solder side, in the order they were soldered (tick off while solder
 | N12 GND | L14 (IMU GND) | ground |
 | L14 | B14 (screen GND) | ground, run along the empty row 13 |
 | N2 | T2 Gi, then T2 to T4 Ga | ground, once the pigtails are in |
-| L14 | Q14 (amp input G) | ground, once the pigtail is in |
+| T4 | Q14 (amp input G) | ground, once the pigtails are in; up the empty column T so it stays off the row-13 wires |
 | O12 3V3 | M14 (IMU VIN), then M14 to A14 (screen VCC) | the only source on the 3.3 V rail; only one wire on O12, because its neighbour N12 is GND |
 | O2 VIN | S2 5i, then S2 to S4 5a | 5 V |
 | A12 D23 / G12 D18 | C14 DIN / D14 CLK | SPI |

@@ -34,15 +34,15 @@ export const STAGES: Stage[] = [
   {
     id: "perfboard",
     title: "2. Perfboard",
-    intro: "Use the board's printed coordinates: printed side up, column A on the left, row 01 at the bottom. Turn it over side to side, so the letters read T to A underneath.",
+    intro: "Hole names are the ones printed on the ESP32 side: column A on the left, row 01 at the bottom. The back has its own letters that name different holes (A and T swap, B and S, ...); the Wire by wire view uses those.",
     steps: [
       { id: "b1", text: "Cut two 15-way strips from the sockets (cut through the 16th, file smooth). The leftover 4-way piece is the IMU socket." },
       { id: "b2", text: "Push the ESP32 into both strips, chip up, drop them into A2-O2 and A12-O12, antenna end (EN / D23) at column A off the edge, EN in A2. Tack A2, O2, A12, O12, check flat, solder the rest. Pull the ESP32 out, trim to 2 mm, check neighbours." },
       { id: "b3", text: "Solder 8 male header pins into A14-H14 (long end up) for the screen cable." },
       { id: "b4", text: "Solder the 4-way female piece into J14-M14. Test-fit the IMU lying flat, body off the row-14 edge: VIN lands on M14." },
       { id: "b5", text: "R2 (10 kohm) flat on the component side from D3 to D7. On the solder side, bend the D3 leg onto D2 (D34) and solder it." },
-      { id: "b6", text: "Wire the solder side in order: ground, 3.3 V, screen, IMU, audio. Leave the pigtail holes empty. Tick them off in the Perfboard view." },
-      { id: "b7", text: "Outside wires, ~12 cm and labelled, through first: S2 5V IN, T2 GND IN, S4 AMP 5V, T4 AMP GND, O14 AMP L, P14 AMP R, Q14 AMP G, SENSE in S6. Then the board wires to their ends." },
+      { id: "b6", text: "Wire the solder side in order: ground, 3.3 V, screen, IMU. Leave the pigtail holes empty. Tick them off in the Perfboard view." },
+      { id: "b7", text: "Outside wires, ~12 cm and labelled, through first: S2 5V IN, T2 GND IN, S4 AMP 5V, T4 AMP GND, O14 AMP L, P14 AMP R, Q14 AMP G, SENSE in S6. Then the board wires to their ends, audio included. The Wire by wire view shows each one." },
       { id: "b8", text: "Optional: a 100-470 uF / 10 V+ electrolytic across 5 V and GND near S2 / T2, on its side, stripe to GND." },
     ],
     check: "ESP32 out: every wire beeps end to end; no beep between 5 V, 3.3 V and GND (O2-N2, O12-N12, O2-O12) or between neighbouring socket holes; S6 to GND reads ~10 kohm.",

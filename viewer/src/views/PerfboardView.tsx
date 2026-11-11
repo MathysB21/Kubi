@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { NET_COLORS } from "../model/electronics";
-import { BOARD_WIRES, NET_NAMES, OFFBOARD_WIRES, PADS, R2, SOCKET_HIGH, SOCKET_LOW, SOCKET_ROW, type BoardWire, type Net } from "../model/perfboard";
-import { COL_LETTERS, COLS, parseHole, ROWS } from "../model/scad";
+import { BOARD_WIRES, NET_NAMES, OFFBOARD_WIRES, PADS, R2, SOCKET_HIGH, SOCKET_LOW, SOCKET_ROW, wirePoints, type BoardWire, type Net } from "../model/perfboard";
+import { backHole, COL_LETTERS, COLS, parseHole, ROWS } from "../model/scad";
 import { usePersistentSet } from "../hooks";
 import { Button, Hint, Section, Segmented, Toggle } from "../ui";
 
@@ -36,6 +36,8 @@ export function PerfboardView() {
   // ESP32 outline: x -33.1..17.9 mm and y -15.27..12.73 mm (rows 1.49..12.51), in hole units
   const espX0 = Math.min(colX(-2.53), colX(17.55));
   const espX1 = Math.max(colX(-2.53), colX(17.55));
+  // The back of the board has its own printed letters
+  const nm = (hole: string) => (side === "solder" ? backHole(hole) : hole);
   const hovered = BOARD_WIRES.find((w) => w.id === hover);
   const boardDone = BOARD_WIRES.filter((w) => done.set.has(w.id)).length;
   const offDone = OFFBOARD_WIRES.filter((w) => done.set.has(w.id)).length;
@@ -49,7 +51,7 @@ export function PerfboardView() {
             onChange={setSide}
             options={[
               { id: "component", label: "Component side (top)" },
-              { id: "solder", label: "Solder side (underneath, mirrored)" },
+              { id: "solder", label: "Solder side (underneath)" },
             ]}
           />
           <Toggle label="ESP32 outline" checked={outline} onChange={setOutline} />
@@ -61,7 +63,7 @@ export function PerfboardView() {
             fill={side === "component" ? "#3b2f20" : "#2b2418"} stroke="#6b5636" />
           {/* column letters and row numbers, as printed on the board */}
           {Array.from({ length: COLS }, (_, i) => (
-            <text key={i} x={colX(i + 1)} y={MT + 0.6 * P} textAnchor="middle" fontSize={10} fill="#a1a1aa">{COL_LETTERS[i]}</text>
+            <text key={i} x={colX(i + 1)} y={MT + 0.6 * P} textAnchor="middle" fontSize={10} fill="#a1a1aa">{side === "solder" ? COL_LETTERS[COLS - 1 - i] : COL_LETTERS[i]}</text>
           ))}
           {Array.from({ length: ROWS }, (_, i) => (
             <text key={i} x={Math.min(colX(-2), colX(23)) - 8} y={rowY(i + 1) + 3.5} textAnchor="middle" fontSize={10} fill="#a1a1aa">
@@ -139,7 +141,7 @@ export function PerfboardView() {
           })}
 
           {/* wires */}
-          {BOARD_WIRES.map((w, i) => {
+          {BOARD_WIRES.map((w) => {
             const a = at(w.from);
             const b = at(w.to);
             const isHover = hover === w.id;
@@ -151,19 +153,13 @@ export function PerfboardView() {
                   opacity={hover && !isHover ? 0.25 : isDone ? 0.45 : 0.95} onMouseEnter={() => setHover(w.id)} onMouseLeave={() => setHover(null)} />
               );
             }
-            // Curved so a wire never reads as passing through the holes it crosses
-            const mx = (a.x + b.x) / 2;
-            const my = (a.y + b.y) / 2;
-            const len = Math.hypot(b.x - a.x, b.y - a.y);
-            const bend = (i % 2 ? 1 : -1) * Math.min(0.22 * len, 60);
-            const nx = -(b.y - a.y) / (len || 1);
-            const ny = (b.x - a.x) / (len || 1);
-            const d = `M ${a.x} ${a.y} Q ${mx + nx * bend} ${my + ny * bend} ${b.x} ${b.y}`;
+            // The route it is actually laid along (see the Wire by wire view)
+            const d = wirePoints(w).map(([c, r], n) => `${n ? "L" : "M"} ${colX(c)} ${rowY(r)}`).join(" ");
             return (
               <g key={w.id} onMouseEnter={() => setHover(w.id)} onMouseLeave={() => setHover(null)} className="cursor-pointer"
                 onClick={() => done.toggle(w.id)}>
                 <path d={d} fill="none" stroke="transparent" strokeWidth={12} />
-                <path d={d} fill="none" stroke={color} strokeWidth={isHover ? 4.5 : 2.4} strokeLinecap="round"
+                <path d={d} fill="none" stroke={color} strokeWidth={isHover ? 4.5 : 2.4} strokeLinecap="round" strokeLinejoin="round"
                   strokeDasharray={isDone ? "5 5" : undefined} opacity={hover && !isHover ? 0.18 : isDone ? 0.5 : 0.95} />
                 <circle cx={a.x} cy={a.y} r={3.4} fill={color} opacity={hover && !isHover ? 0.2 : 1} />
                 <circle cx={b.x} cy={b.y} r={3.4} fill={color} opacity={hover && !isHover ? 0.2 : 1} />
@@ -173,7 +169,7 @@ export function PerfboardView() {
         </svg>
 
         <div className="mt-3 min-h-[44px] max-w-[1100px]">
-          {hovered ? <WireCaption w={hovered} /> : (
+          {hovered ? <WireCaption w={hovered} nm={nm} /> : (
             <Hint>
               Hover a wire to trace it, click it to tick it off. Tags: 5i / Gi = 5 V and GND in from the MT3608, 5a / Ga = 5 V and GND out to the
               PAM8403, Bt = battery sense from R1. Round amber pads are wires soldered straight into the board; square ones are header pins.
@@ -194,7 +190,7 @@ export function PerfboardView() {
         <Section title={`On the board: ${boardDone} / ${BOARD_WIRES.length}`} right={<Button onClick={done.clear}>Reset ticks</Button>}>
           <Hint>
             Solder side, in this order. Strip 2-3 mm, tin, keep wires flat and away from the antenna end (column A). Leave the
-            pigtail holes (S2, T2, S4, T4, S6, O14-Q14) empty until their outside wire is through.
+            pigtail holes (S2, T2, S4, T4, S6, O14-Q14, ESP32-side names) empty until their outside wire is through.
           </Hint>
           <ul className="mt-3 space-y-1">
             {BOARD_WIRES.map((w) => (
@@ -207,7 +203,7 @@ export function PerfboardView() {
                   <input type="checkbox" checked={done.set.has(w.id)} onChange={() => done.toggle(w.id)} className="mt-0.5 h-4 w-4 accent-amber-500" />
                   <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: NET_COLORS[w.net] }} />
                   <span className={done.set.has(w.id) ? "text-zinc-500 line-through" : "text-zinc-200"}>
-                    <span className="font-mono text-xs text-amber-400">{w.from} → {w.to}</span>
+                    <span className="font-mono text-xs text-amber-400">{nm(w.from)} → {nm(w.to)}</span>
                     <span className="ml-2">{w.label}</span>
                   </span>
                 </label>
@@ -236,7 +232,7 @@ export function PerfboardView() {
         <Section title="Before power-up">
           <ul className="list-disc space-y-1.5 pl-4 text-sm text-zinc-300">
             <li>ESP32 out: every wire beeps end to end.</li>
-            <li>No beep between 5 V, 3.3 V and GND: O2-N2, O12-N12, O2-O12.</li>
+            <li>No beep between 5 V, 3.3 V and GND (ESP32-side names): O2-N2, O12-N12, O2-O12.</li>
             <li>No beep between neighbouring socket holes.</li>
             <li>S6 to GND reads about 10 kohm (R2).</li>
           </ul>
@@ -246,11 +242,11 @@ export function PerfboardView() {
   );
 }
 
-function WireCaption({ w }: { w: BoardWire }) {
+function WireCaption({ w, nm }: { w: BoardWire; nm: (hole: string) => string }) {
   return (
     <div className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
       <span className="h-2.5 w-2.5 rounded-full" style={{ background: NET_COLORS[w.net] }} />
-      <span className="font-mono text-amber-400">{w.from} → {w.to}</span>
+      <span className="font-mono text-amber-400">{nm(w.from)} → {nm(w.to)}</span>
       <span>{w.label}</span>
       <span className="text-zinc-500">({NET_NAMES[w.net]})</span>
     </div>

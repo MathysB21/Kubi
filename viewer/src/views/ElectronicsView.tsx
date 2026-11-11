@@ -11,8 +11,9 @@ import { useEased } from "../hooks";
 import { Button, Hint, Section, Segmented, Slider, Toggle } from "../ui";
 import { PerfboardView } from "./PerfboardView";
 import { StepsView } from "./StepsView";
+import { WireGuideView } from "./WireGuideView";
 
-type Mode = "fit" | "perfboard" | "steps";
+type Mode = "fit" | "guide" | "perfboard" | "steps";
 
 export function ElectronicsView() {
   const [mode, setMode] = useState<Mode>("fit");
@@ -24,15 +25,17 @@ export function ElectronicsView() {
           onChange={setMode}
           options={[
             { id: "fit", label: "Fit in the cube (3D)" },
+            { id: "guide", label: "Wire by wire" },
             { id: "perfboard", label: "Perfboard & wiring" },
             { id: "steps", label: "Assembly steps" },
           ]}
         />
       </div>
-      {/* All three stay mounted and are hidden instead: unmounting the 3D view
+      {/* All of them stay mounted and are hidden instead: unmounting the 3D view
           tears down drei's <Html> label roots mid-render (React 19 errors), and
           keeping them also keeps each view's camera and scroll position. */}
       <div className={`min-h-0 flex-1 ${mode === "fit" ? "" : "hidden"}`}><FitView /></div>
+      <div className={`min-h-0 flex-1 ${mode === "guide" ? "" : "hidden"}`}><WireGuideView active={mode === "guide"} /></div>
       <div className={`min-h-0 flex-1 ${mode === "perfboard" ? "" : "hidden"}`}><PerfboardView /></div>
       <div className={`min-h-0 flex-1 ${mode === "steps" ? "" : "hidden"}`}><StepsView /></div>
     </div>
