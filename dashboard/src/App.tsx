@@ -20,6 +20,18 @@ import {
   Palette,
   Volume2,
   VolumeX,
+  Sun,
+  Flower2,
+  Music,
+  Coffee,
+  Sunset,
+  Laptop,
+  Dumbbell,
+  Gauge,
+  BatteryCharging,
+  BatteryFull,
+  PlugZap,
+  Image,
 } from "lucide-react";
 import { Accordion } from "./components/Accordion";
 import {
@@ -62,6 +74,14 @@ interface KubiState {
   volume?: number; // chime volume, 0-100
   face4Maze?: boolean;
   isSleeping?: boolean;
+  batteryVoltage?: number;
+  batteryState?: "draining" | "charging" | "full";
+  batteryMinutes?: number; // to empty or to full, -1 = still estimating
+  pressure?: number; // hPa
+  chargeAlertHigh?: number; // 0 = off
+  chargeAlertLow?: number; // 0 = off
+  mascotScene?: number;
+  mascotPreview?: boolean; // true while a scene picked here is showing
   pomodoro: PomodoroState;
   [key: string]: any;
 }
@@ -97,6 +117,33 @@ const FACE_MODES = [
 ];
 
 // Minutes of inactivity before the Mascot face turns its screen off (0 = never)
+// The Mascot face's scenes, by firmware index. Birthday (1) and Christmas (2)
+// are left out on purpose: they only turn up on their day.
+const SCENES = [
+  { id: 0, title: "Beach", icon: Sun },
+  { id: 3, title: "Flower field", icon: Flower2 },
+  { id: 4, title: "Music", icon: Music },
+  { id: 5, title: "Cafe", icon: Coffee },
+  { id: 6, title: "Bedtime", icon: Moon },
+  { id: 7, title: "Sunset", icon: Sunset },
+  { id: 8, title: "Working", icon: Laptop },
+  { id: 9, title: "Gym", icon: Dumbbell },
+];
+
+function formatDuration(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (h === 0) return `${m} min`;
+  return m === 0 ? `${h} h` : `${h} h ${m} min`;
+}
+
+function batteryLine(d: { batteryState?: string; batteryMinutes?: number }): string {
+  const mins = d.batteryMinutes ?? -1;
+  if (d.batteryState === "full") return "Full - you can unplug";
+  if (d.batteryState === "charging") return mins >= 0 ? `Charging, full in ~${formatDuration(mins)}` : "Charging, estimating...";
+  return mins >= 0 ? `~${formatDuration(mins)} left` : "On battery, estimating...";
+}
+
 const SLEEP_OPTIONS = [
   { min: 0, label: "Never" },
   { min: 1, label: "1 min" },
@@ -166,6 +213,18 @@ function KubiDashboard() {
   useEffect(() => {
     if (volumeDraft !== null && data.volume === volumeDraft) setVolumeDraft(null);
   }, [data.volume, volumeDraft]);
+
+  // Charge reminder sliders: same draft-until-confirmed pattern as volume
+  const [alertHighDraft, setAlertHighDraft] = useState<number | null>(null);
+  const [alertLowDraft, setAlertLowDraft] = useState<number | null>(null);
+  const alertHigh = alertHighDraft ?? data.chargeAlertHigh ?? 0;
+  const alertLow = alertLowDraft ?? data.chargeAlertLow ?? 0;
+  useEffect(() => {
+    if (alertHighDraft !== null && data.chargeAlertHigh === alertHighDraft) setAlertHighDraft(null);
+  }, [data.chargeAlertHigh, alertHighDraft]);
+  useEffect(() => {
+    if (alertLowDraft !== null && data.chargeAlertLow === alertLowDraft) setAlertLowDraft(null);
+  }, [data.chargeAlertLow, alertLowDraft]);
 
   // 2. Settings mutation
   const mutation = useMutation({
@@ -386,6 +445,114 @@ function KubiDashboard() {
         </div>
       ),
     },
+    // SCENES ITEM
+    {
+      headerContent: (
+        <div className="flex items-center gap-3 font-medium text-zinc-100">
+          <Image size={18} className="text-amber-500" /> Kubi's Scenes
+        </div>
+      ),
+      bodyContent: (
+        <div className="space-y-4 text-sm">
+          <p className="text-xs text-zinc-500 leading-relaxed">
+            Kubi picks his own scene on the Mascot face, by the time of day and the day of the week. Pick one here to
+            peek at it for 10 minutes; then Kubi takes over again.
+          </p>
+          <div className="grid grid-cols-4 gap-2">
+            {SCENES.map((scene) => {
+              const Icon = scene.icon;
+              const isActive = data.mascotScene === scene.id;
+              return (
+                <button
+                  key={scene.id}
+                  onClick={() => mutation.mutate({ mascotScene: scene.id })}
+                  className={`flex flex-col items-center gap-1 py-2.5 rounded-xl text-xs font-medium border transition-colors cursor-pointer ${
+                    isActive
+                      ? "bg-amber-500/10 border-amber-500/50 text-amber-500"
+                      : "bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700"
+                  }`}
+                >
+                  <Icon size={16} />
+                  {scene.title}
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-zinc-500">
+              {data.mascotPreview
+                ? "Showing your pick for now."
+                : SCENES.some((sc) => sc.id === data.mascotScene)
+                  ? `Kubi's pick: ${SCENES.find((sc) => sc.id === data.mascotScene)?.title}.`
+                  : "Kubi is up to something special today."}
+            </span>
+            {data.mascotPreview && (
+              <button
+                onClick={() => mutation.mutate({ mascotScene: -1 })}
+                className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg transition-colors cursor-pointer"
+              >
+                Let Kubi choose
+              </button>
+            )}
+          </div>
+        </div>
+      ),
+    },
+    // BATTERY REMINDERS ITEM
+    {
+      headerContent: (
+        <div className="flex items-center gap-3 font-medium text-zinc-100">
+          <PlugZap size={18} className="text-amber-500" /> Battery Reminders
+        </div>
+      ),
+      bodyContent: (
+        <div className="space-y-4 text-sm">
+          <p className="text-xs text-zinc-500 leading-relaxed">
+            Kubi chimes and shows a note when it is time to unplug or plug in. Tap Kubi to dismiss it. The charger
+            itself always fills the battery; this only reminds you.
+          </p>
+          {[
+            { label: "Remind me to unplug at", value: alertHigh, min: 50, max: 100, set: setAlertHighDraft, key: "chargeAlertHigh" },
+            { label: "Remind me to plug in at", value: alertLow, min: 5, max: 50, set: setAlertLowDraft, key: "chargeAlertLow" },
+          ].map((r) => {
+            const on = r.value > 0;
+            const shown = on ? r.value : r.key === "chargeAlertHigh" ? 80 : 20;
+            return (
+              <div key={r.key} className="space-y-1.5">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-zinc-300 font-medium">{r.label}</span>
+                  <button
+                    onClick={() => {
+                      const next = on ? 0 : shown;
+                      r.set(next);
+                      mutation.mutate({ [r.key]: next });
+                    }}
+                    className={`px-2 py-0.5 rounded-md font-mono cursor-pointer ${
+                      on ? "bg-amber-500/10 text-amber-500" : "bg-zinc-800 text-zinc-500"
+                    }`}
+                  >
+                    {on ? `${r.value}%` : "Off"}
+                  </button>
+                </div>
+                <input
+                  type="range"
+                  min={r.min}
+                  max={r.max}
+                  step={1}
+                  value={shown}
+                  disabled={!on}
+                  aria-label={r.label}
+                  onChange={(e) => r.set(Number(e.target.value))}
+                  onPointerUp={() => on && mutation.mutate({ [r.key]: r.value })}
+                  onKeyUp={() => on && mutation.mutate({ [r.key]: r.value })}
+                  className="w-full accent-amber-500 cursor-pointer disabled:opacity-40"
+                />
+              </div>
+            );
+          })}
+        </div>
+      ),
+    },
     // SCREEN SLEEP ITEM
     {
       headerContent: (
@@ -488,9 +655,26 @@ function KubiDashboard() {
             </div>
             <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800/50">
               <span className="text-zinc-500 text-xs block mb-1 flex items-center gap-1">
-                <Battery size={12} className="text-amber-500" /> BATTERY
+                {data.batteryState === "charging" ? (
+                  <BatteryCharging size={12} className="text-amber-500" />
+                ) : data.batteryState === "full" ? (
+                  <BatteryFull size={12} className="text-amber-500" />
+                ) : (
+                  <Battery size={12} className="text-amber-500" />
+                )}{" "}
+                BATTERY
               </span>
-              <span className="font-mono text-zinc-300">{data.battery}%</span>
+              <span className="font-mono text-zinc-300">
+                {data.battery}%
+                {data.batteryVoltage ? <span className="text-zinc-500"> · {data.batteryVoltage.toFixed(2)} V</span> : null}
+              </span>
+              <span className="block text-[11px] text-zinc-500 mt-0.5">{batteryLine(data)}</span>
+            </div>
+            <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800/50">
+              <span className="text-zinc-500 text-xs block mb-1 flex items-center gap-1">
+                <Gauge size={12} className="text-amber-500" /> AIR PRESSURE
+              </span>
+              <span className="font-mono text-zinc-300">{data.pressure ? `${data.pressure.toFixed(1)} hPa` : "-"}</span>
             </div>
             <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800/50">
               <span className="text-zinc-500 text-xs block mb-1 flex items-center gap-1">

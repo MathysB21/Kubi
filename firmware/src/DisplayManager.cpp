@@ -486,6 +486,224 @@ static const KubiScene* sceneAt(int sceneIndex) {
     return (sc && sc->palette && sc->rleData) ? sc : nullptr;
 }
 
+// --- Diorama animation (tools/build_scenes.py SCENE_ANIM) ---
+// The drawn scene is kept decoded (one palette index per scene pixel, 19 KB)
+// so anything drawn over it can be erased by repainting just those pixels.
+static const int ANIM_W = 120, ANIM_H = 160;
+static uint8_t s_sceneIdx[ANIM_W * ANIM_H];
+static const KubiScene* s_idxScene = nullptr;
+
+struct SceneParticle {
+    bool alive, drawn;
+    int16_t x16, y16;   // 1/16 scene pixel
+    int8_t vx16, vy16;
+    int8_t px, py;      // where it was drawn
+    uint8_t age;
+    uint16_t color;
+};
+static const int MAX_SCENE_PARTICLES = 8;
+static SceneParticle s_particles[MAX_SCENE_PARTICLES];
+static uint32_t s_nextTick, s_nextBlink, s_blinkUntil, s_nextSpark;
+static uint8_t s_spawnCountdown;
+static bool s_blinkShut;
+
+struct SceneSpark { bool on; uint8_t x, y, stage; uint32_t until; };
+static SceneSpark s_sparks[3];
+static int s_rippleRing;           // ring lit now, -1 while resting
+static uint32_t s_nextRipple, s_nextWiggle;
+static uint8_t s_wigglePhase;      // 0 still, 1 shifted right, 2 still, 3 shifted left
+
+static uint32_t s_rng = 0x2545F491u;
+static uint32_t animRand() { s_rng ^= s_rng << 13; s_rng ^= s_rng >> 17; s_rng ^= s_rng << 5; return s_rng; }
+static int animRange(int n) { return n > 0 ? (int)(animRand() % (uint32_t)n) : 0; }
+
+// The temperature badge, in scene pixels: never drawn on or restored
+static bool inHud(int x, int y) { return x >= 34 && x <= 86 && y >= 141 && y <= 157; }
+
+static void resetSceneAnimation(uint32_t now) {
+    for (auto& p : s_particles) p.alive = p.drawn = false;
+    for (auto& s : s_sparks) s.on = false;
+    s_blinkShut = false;
+    s_nextTick = now;
+    s_nextBlink = now + 2000 + animRange(3000);
+    s_nextSpark = now + 500;
+    s_spawnCountdown = 0;
+    s_rippleRing = -1;
+    s_nextRipple = now + 300;
+    s_wigglePhase = 0;
+    s_nextWiggle = now;
+}
+
+static void paintScenePixel(TFT_eSPI& tft, int x, int y, uint8_t scale, uint16_t color);
+static void restoreScenePixel(TFT_eSPI& tft, const KubiScene* sc, int x, int y);
+
+static void drawAnimPixels(TFT_eSPI& tft, const KubiScene* sc, const KubiAnimPixel* px, int count, bool restore) {
+    for (int i = 0; i < count; i++) {
+        if (restore) {
+            restoreScenePixel(tft, sc, px[i].x, px[i].y);
+        } else {
+            uint8_t c = px[i].c < sc->paletteSize ? px[i].c : 0;
+            paintScenePixel(tft, px[i].x, px[i].y, sc->scale, pgm_read_word(&sc->palette[c]));
+        }
+    }
+}
+
+static void drawRippleRing(TFT_eSPI& tft, const KubiScene* sc, int ring, bool lit) {
+    const KubiSceneAnim* a = sc->anim;
+    for (int i = 0; i < a->rippleCount; i++) {
+        if (a->ripple[i].c != ring) continue;
+        if (lit) paintScenePixel(tft, a->ripple[i].x, a->ripple[i].y, sc->scale, 0xFFFF);
+        else restoreScenePixel(tft, sc, a->ripple[i].x, a->ripple[i].y);
+    }
+}
+
+static void paintScenePixel(TFT_eSPI& tft, int x, int y, uint8_t scale, uint16_t color) {
+    if (x < 0 || y < 0 || x >= ANIM_W || y >= ANIM_H || inHud(x, y)) return;
+    tft.fillRect(x * scale, y * scale, scale, scale, color);
+}
+
+static void restoreScenePixel(TFT_eSPI& tft, const KubiScene* sc, int x, int y) {
+    if (x < 0 || y < 0 || x >= ANIM_W || y >= ANIM_H) return;
+    uint8_t idx = s_sceneIdx[y * ANIM_W + x];
+    if (idx >= sc->paletteSize) idx = 0;
+    paintScenePixel(tft, x, y, sc->scale, pgm_read_word(&sc->palette[idx]));
+}
+
+static void glyphPixels(TFT_eSPI& tft, const KubiScene* sc, int px, int py, bool erase, uint16_t color) {
+    const KubiSceneAnim* a = sc->anim;
+    for (int gy = 0; gy < a->glyphH; gy++) {
+        for (int gx = 0; gx < a->glyphW; gx++) {
+            if (!(a->glyphMask & (1u << (gy * 4 + gx)))) continue;
+            if (erase) restoreScenePixel(tft, sc, px + gx, py + gy);
+            else paintScenePixel(tft, px + gx, py + gy, sc->scale, color);
+        }
+    }
+}
+
+void DisplayManager::pokeScene() {
+    if (!s_blinkShut) s_nextBlink = millis();
+}
+
+void DisplayManager::animateScene(const KubiScene* sc, uint32_t now) {
+    if (!sc || sc != s_idxScene || !sc->anim || _sleeping) return;
+    const KubiSceneAnim* a = sc->anim;
+    uint8_t scale = sc->scale;
+
+    // Blink: eyes shut for ~140 ms every few seconds, sometimes twice
+    if (a->eyeCount && a->eyes) {
+        if (!s_blinkShut && (int32_t)(now - s_nextBlink) >= 0) {
+            for (int i = 0; i < a->eyeCount; i++) paintScenePixel(_tft, a->eyes[i].x, a->eyes[i].y, scale, a->lidColor);
+            s_blinkShut = true;
+            s_blinkUntil = now + 140;
+        } else if (s_blinkShut && (int32_t)(now - s_blinkUntil) >= 0) {
+            for (int i = 0; i < a->eyeCount; i++) restoreScenePixel(_tft, sc, a->eyes[i].x, a->eyes[i].y);
+            s_blinkShut = false;
+            s_nextBlink = now + (animRange(5) == 0 ? 220 : 2500 + animRange(4000));
+        }
+    }
+
+    // Glints: a small plus that shrinks to a dot, then the scene again
+    if (a->sparkCount && a->sparks) {
+        if ((int32_t)(now - s_nextSpark) >= 0) {
+            for (auto& s : s_sparks) {
+                if (s.on) continue;
+                const KubiAnimPoint& p = a->sparks[animRange(a->sparkCount)];
+                s = { true, p.x, p.y, 0, now + 120 };
+                paintScenePixel(_tft, p.x, p.y, scale, a->sparkColor);
+                paintScenePixel(_tft, p.x - 1, p.y, scale, a->sparkColor);
+                paintScenePixel(_tft, p.x + 1, p.y, scale, a->sparkColor);
+                paintScenePixel(_tft, p.x, p.y - 1, scale, a->sparkColor);
+                paintScenePixel(_tft, p.x, p.y + 1, scale, a->sparkColor);
+                break;
+            }
+            int base = a->sparkEvery10 ? a->sparkEvery10 * 10 : 150;
+            s_nextSpark = now + base + animRange(base * 3);
+        }
+        for (auto& s : s_sparks) {
+            if (!s.on || (int32_t)(now - s.until) < 0) continue;
+            if (s.stage == 0) {
+                restoreScenePixel(_tft, sc, s.x - 1, s.y);
+                restoreScenePixel(_tft, sc, s.x + 1, s.y);
+                restoreScenePixel(_tft, sc, s.x, s.y - 1);
+                restoreScenePixel(_tft, sc, s.x, s.y + 1);
+                s.stage = 1;
+                s.until = now + 150;
+            } else {
+                restoreScenePixel(_tft, sc, s.x, s.y);
+                s.on = false;
+            }
+        }
+    }
+
+    // Ripple: sound waves light up ring by ring away from the speaker, then rest
+    if (a->rippleCount && a->ripple && (int32_t)(now - s_nextRipple) >= 0) {
+        if (s_rippleRing >= 0) drawRippleRing(_tft, sc, s_rippleRing, false);
+        s_rippleRing++;
+        if (s_rippleRing >= a->rippleRings) {
+            s_rippleRing = -1;
+            s_nextRipple = now + 350;
+        } else {
+            drawRippleRing(_tft, sc, s_rippleRing, true);
+            s_nextRipple = now + 70;
+        }
+    }
+
+    // Wiggle: a limb jiggles a pixel right, back, left, back
+    if ((a->wiggleCountA || a->wiggleCountB) && (int32_t)(now - s_nextWiggle) >= 0) {
+        switch (s_wigglePhase) {
+            case 0: drawAnimPixels(_tft, sc, a->wiggleA, a->wiggleCountA, false); break;
+            case 1: drawAnimPixels(_tft, sc, a->wiggleA, a->wiggleCountA, true); break;
+            case 2: drawAnimPixels(_tft, sc, a->wiggleB, a->wiggleCountB, false); break;
+            default: drawAnimPixels(_tft, sc, a->wiggleB, a->wiggleCountB, true); break;
+        }
+        s_wigglePhase = (s_wigglePhase + 1) & 3;
+        s_nextWiggle = now + 120;
+    }
+
+    // Particles, stepped at 10 Hz
+    if (!a->particleKind || (int32_t)(now - s_nextTick) < 0) return;
+    s_nextTick = now + 100;
+    int maxX = a->areaX + a->areaW - a->glyphW, maxY = a->areaY + a->areaH - a->glyphH;
+    int alive = 0;
+    for (auto& p : s_particles) {
+        if (!p.alive) continue;
+        switch (a->particleKind) {
+            case 1: p.y16 -= a->speed16; p.x16 += animRange(9) - 4; break;               // rise, wavering
+            case 2: p.y16 += a->speed16; p.x16 += p.vx16 + animRange(7) - 3; break;      // fall, fluttering
+            default:                                                                       // drift
+                if (animRange(8) == 0) p.vx16 = animRange(2 * a->speed16 + 1) - a->speed16;
+                if (animRange(8) == 0) p.vy16 = animRange(a->speed16 + 1) - a->speed16 / 2;
+                p.x16 += p.vx16; p.y16 += p.vy16; break;
+        }
+        p.age++;
+        int nx = p.x16 >> 4, ny = p.y16 >> 4;
+        bool out = nx < a->areaX || ny < a->areaY || nx > maxX || ny > maxY || p.age > 150;
+        if (p.drawn && (out || nx != p.px || ny != p.py)) {
+            glyphPixels(_tft, sc, p.px, p.py, true, 0);
+            p.drawn = false;
+        }
+        if (out) { p.alive = false; continue; }
+        if (!p.drawn) {
+            glyphPixels(_tft, sc, nx, ny, false, p.color);
+            p.px = nx; p.py = ny; p.drawn = true;
+        }
+        alive++;
+    }
+    if (s_spawnCountdown > 0) { s_spawnCountdown--; return; }
+    if (alive >= a->maxParticles) return;
+    for (auto& p : s_particles) {
+        if (p.alive) continue;
+        int x = a->emitX + animRange(a->emitW), y = a->emitY + animRange(a->emitH);
+        p.alive = true; p.drawn = false; p.age = 0;
+        p.x16 = x << 4; p.y16 = y << 4;
+        p.vx16 = animRange(5) - 2;
+        p.vy16 = 0;
+        p.color = a->colors[animRange(a->colorCount > 0 ? a->colorCount : 1)];
+        break;
+    }
+    s_spawnCountdown = a->spawnEvery;
+}
+
 // Expensive (a whole screen of SPI): only call on a full repaint.
 void DisplayManager::drawScene(int sceneIndex) {
     const KubiScene* sc = sceneAt(sceneIndex);
@@ -494,6 +712,8 @@ void DisplayManager::drawScene(int sceneIndex) {
     uint8_t scale = sc->scale > 0 ? sc->scale : 1;
     int totalPixels = sc->width * sc->height;
     int curPixel = 0;
+    bool keepIndex = sc->width == ANIM_W && sc->height == ANIM_H;
+    s_idxScene = nullptr;
 
     // Each run becomes one fillRect per source row it covers, instead of
     // scale*scale drawPixel calls per pixel (each its own SPI transaction).
@@ -509,9 +729,14 @@ void DisplayManager::drawScene(int sceneIndex) {
             int span = sc->width - px;
             if (span > count) span = count;
             _tft.fillRect(px * scale, py * scale, span * scale, scale, color);
+            if (keepIndex) memset(&s_sceneIdx[curPixel], colorIdx, span);
             curPixel += span;
             count -= span;
         }
+    }
+    if (keepIndex && curPixel == totalPixels) {
+        s_idxScene = sc;
+        resetSceneAnimation(millis());
     }
 }
 
@@ -551,6 +776,8 @@ void DisplayManager::drawMascotFace(float temperature, int hourOfDay, int sceneI
         strncpy(_drawnTemp, tempBuf, sizeof(_drawnTemp) - 1);
         _drawnTemp[sizeof(_drawnTemp) - 1] = '\0';
     }
+
+    animateScene(sc, millis());
 }
 
 // Shown while the Kubi-Setup hotspot is up. Not steady state: full repaint.

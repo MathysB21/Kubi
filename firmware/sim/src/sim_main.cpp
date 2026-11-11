@@ -7,6 +7,7 @@
 #include <sstream>
 #include <mutex>
 #include <cstring>
+#include <algorithm>
 
 #include "httplib.h"
 #include "Arduino.h"
@@ -21,6 +22,7 @@
 #include "MazeGame.h"
 #include "FaceMap.h"
 #include "KubiScenes.h"
+#include "SceneSchedule.h"
 #include "API.h"
 #include "ArduinoJson.h"
 
@@ -49,6 +51,8 @@ bool Preferences::_loaded = false;
 volatile KubiMode currentMode            = MODE_CLOCK_IDLE;
 volatile float    roomTemperature        = 22.0f;
 volatile int      batteryPercentage      = 100;
+volatile float    batteryVoltage         = 3.95f; // the sim injects percent only
+static int chargeAlertHigh = 0, chargeAlertLow = 0; // stored, mirrors API.cpp (no reminders in the sim)
 volatile bool     isScreenOverrideActive = false;
 volatile bool     factoryResetRequested  = false;
 
@@ -85,6 +89,9 @@ static bool clockAnalogView = false;
 
 // --- FACE 3 --- (mirrors main.cpp)
 static int mascotSceneIndex = 0;
+static int mascotPreviewScene = -1;      // dashboard preview, mirrors main.cpp
+static uint32_t mascotPreviewAt = 0;
+static int birthdayMMDD = 0;
 
 static int wrapMascotScene(int index) {
     int n = (int)ALL_KUBI_SCENE_COUNT;
@@ -233,11 +240,11 @@ void hardwareSimulationThread() {
                         } else if (currentMode == MODE_AMBIENT && !face4Maze) {
                             ambient.nextColour(); // silent, mirrors main.cpp
                         } else if (currentMode == MODE_MASCOT_ROUTINE && ALL_KUBI_SCENE_COUNT > 0) {
-                            mascotSceneIndex = wrapMascotScene(mascotSceneIndex + 1);
+                            display.pokeScene(); // Kubi notices; the scene stays his pick
                             audio.playChime(CHIME_TAP_FEEDBACK);
                             sim_last_chime_name = "CHIME_TAP_FEEDBACK";
                             sim_last_chime_time = now;
-                            std::cout << "[SIM MASCOT] Scene " << mascotSceneIndex << std::endl;
+                            std::cout << "[SIM MASCOT] Poke" << std::endl;
                         }
                         break;
 
@@ -256,11 +263,11 @@ void hardwareSimulationThread() {
                             sim_last_chime_time = now;
                             std::cout << "[SIM CLOCK] Shake toggled view -> " << (clockAnalogView ? "analog" : "digital") << " (saved to Preferences)" << std::endl;
                         } else if (currentMode == MODE_MASCOT_ROUTINE && ALL_KUBI_SCENE_COUNT > 0) {
-                            mascotSceneIndex = wrapMascotScene(mascotSceneIndex - 1);
+                            display.pokeScene(); // Kubi notices; the scene stays his pick
                             audio.playChime(CHIME_TAP_FEEDBACK);
                             sim_last_chime_name = "CHIME_TAP_FEEDBACK";
                             sim_last_chime_time = now;
-                            std::cout << "[SIM MASCOT] Scene " << mascotSceneIndex << std::endl;
+                            std::cout << "[SIM MASCOT] Poke" << std::endl;
                         }
                         break;
 
@@ -303,12 +310,24 @@ void hardwareSimulationThread() {
                 struct tm timeinfo;
                 int currentHour = 12, currentMin = 0;
                 int currentWday = 4, currentMday = 3, currentMon = 8;
-                if (getLocalTime(&timeinfo)) {
+                bool timeValid = getLocalTime(&timeinfo);
+                if (timeValid) {
                     currentHour = timeinfo.tm_hour;
                     currentMin = timeinfo.tm_min;
                     currentWday = timeinfo.tm_wday;
                     currentMday = timeinfo.tm_mday;
                     currentMon = timeinfo.tm_mon;
+                }
+
+                // Kubi's scene pick, kept current on every face (mirrors main.cpp)
+                if (mascotPreviewScene >= 0 && now - mascotPreviewAt < KUBI_SCENE_PREVIEW_MS) {
+                    mascotSceneIndex = mascotPreviewScene;
+                } else {
+                    mascotPreviewScene = -1;
+                    if (timeValid) {
+                        mascotSceneIndex = kubiScheduledScene(currentMon, currentMday, currentWday, currentHour, currentMin,
+                                                              roomTemperature, birthdayMMDD);
+                    }
                 }
 
                 switch (currentMode) {
@@ -404,6 +423,7 @@ int main() {
     Preferences prefs;
     prefs.begin("kubi_settings", false);
     clockAnalogView = prefs.getBool("clockAnalog", false);
+    birthdayMMDD = prefs.getInt("bday", 0);
     face4Maze = prefs.getBool("face4Maze", false);
     display.setSleepTimeoutMinutes(prefs.getInt("sleepMin", 5));
     audio.setVolume(prefs.getInt("volume", 25) / 100.0f);
@@ -437,6 +457,12 @@ int main() {
         doc["mode"] = (int)currentMode;
         doc["temp"] = roomTemperature;
         doc["battery"] = batteryPercentage;
+        doc["batteryVoltage"] = roundf(batteryVoltage * 100.0f) / 100.0f;
+        doc["batteryState"] = "draining";
+        doc["batteryMinutes"] = -1;
+        doc["pressure"] = 1013.2f;
+        doc["chargeAlertHigh"] = chargeAlertHigh;
+        doc["chargeAlertLow"] = chargeAlertLow;
 
         JsonObject pomoObj = doc["pomodoro"].to<JsonObject>();
         pomoObj["phase"]         = (int)pomodoro.getPhase();
@@ -462,6 +488,12 @@ int main() {
         doc["isSleeping"] = display.isSleeping();
         doc["face4Maze"] = face4Maze;
         doc["mascotScene"] = mascotSceneIndex;
+        doc["mascotPreview"] = mascotPreviewScene >= 0;
+        if (birthdayMMDD > 0) {
+            char bday[8];
+            snprintf(bday, sizeof(bday), "%02d-%02d", birthdayMMDD / 100, birthdayMMDD % 100);
+            doc["birthday"] = bday;
+        }
         doc["volume"] = (int)lroundf(audio.getVolume() * 100.0f);
 
         std::string jsonStr;
@@ -533,7 +565,25 @@ int main() {
 
         // Mirrors API.cpp
         if (jsonObj["mascotScene"].is<int>() && ALL_KUBI_SCENE_COUNT > 0) {
-            mascotSceneIndex = wrapMascotScene(jsonObj["mascotScene"].as<int>());
+            int want = jsonObj["mascotScene"].as<int>();
+            if (want < 0) {
+                mascotPreviewScene = -1;
+            } else {
+                mascotPreviewAt = millis();
+                mascotPreviewScene = wrapMascotScene(want);
+                mascotSceneIndex = mascotPreviewScene;
+            }
+        }
+        if (jsonObj["chargeAlertHigh"].is<int>()) chargeAlertHigh = std::max(0, std::min(100, jsonObj["chargeAlertHigh"].as<int>()));
+        if (jsonObj["chargeAlertLow"].is<int>())  chargeAlertLow  = std::max(0, std::min(100, jsonObj["chargeAlertLow"].as<int>()));
+        if (jsonObj["birthday"].is<const char*>()) {
+            int mm = 0, dd = 0;
+            const char* b = jsonObj["birthday"].as<const char*>();
+            birthdayMMDD = (sscanf(b, "%d-%d", &mm, &dd) == 2 && mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) ? mm * 100 + dd : 0;
+            Preferences prefs;
+            prefs.begin("kubi_settings", false);
+            prefs.putInt("bday", birthdayMMDD);
+            prefs.end();
         }
 
         if (jsonObj["face4Maze"].is<bool>()) {
@@ -632,6 +682,12 @@ int main() {
         doc["accelZ"] = diagAccelZ;
         doc["temp"] = roomTemperature;
         doc["battery"] = batteryPercentage;
+        doc["batteryVoltage"] = roundf(batteryVoltage * 100.0f) / 100.0f;
+        doc["batteryState"] = "draining";
+        doc["batteryMinutes"] = -1;
+        doc["pressure"] = 1013.2f;
+        doc["chargeAlertHigh"] = chargeAlertHigh;
+        doc["chargeAlertLow"] = chargeAlertLow;
         doc["rssi"] = -52;
         doc["freeHeap"] = 184320;
         doc["uptime"] = millis() / 1000;
@@ -740,7 +796,9 @@ int main() {
 
         // Mascot Idle Scene Selection
         if (obj["mascotScene"].is<int>()) {
-            mascotSceneIndex = wrapMascotScene(obj["mascotScene"].as<int>());
+            mascotPreviewAt = millis();
+            mascotPreviewScene = wrapMascotScene(obj["mascotScene"].as<int>());
+            mascotSceneIndex = mascotPreviewScene;
             std::cout << "[SIM MASCOT] Injected scene index: " << mascotSceneIndex << std::endl;
         }
 

@@ -40,6 +40,7 @@ SensorManager::SensorManager()
       _lastPollTime(0),
       _lastTempReadTime(0),
       _temperature(21.5f),
+      _pressure(0.0f),
       _activeFace(0),
       _recentGesture(GESTURE_NONE),
       _gravity{ 0, 0, 9.8f },
@@ -129,6 +130,7 @@ void SensorManager::loop() {
         _lastTempReadTime = now;
         if (_bmpFound) {
             _temperature = _bmp.readTemperature();
+            _pressure = _bmp.readPressure() / 100.0f;
         }
     }
 }

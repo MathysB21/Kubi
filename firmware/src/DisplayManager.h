@@ -36,6 +36,7 @@ public:
     // vector mascot when no scenes are compiled in.
     void drawMascotFace(float temperature, int hourOfDay, int sceneIndex, bool showHud = true);
     void drawScene(int sceneIndex);
+    void pokeScene(); // Kubi notices a tap: blink now
     void drawOverrideAlert(const String& message);
     void drawAmbientFace();
     void drawMazeFace();
@@ -64,6 +65,9 @@ private:
     uint8_t _currentRotation;
 
     void drawMascot(int centerX, int centerY, int state);
+    // Blink, glints and particles over the drawn diorama; touches only the
+    // pixels that change. Call every frame while the scene is up.
+    void animateScene(const KubiScene* sc, uint32_t now);
 
     // --- Partial redraw bookkeeping ---
     // Steady-state frames only repaint what changed. A full clear happens on a

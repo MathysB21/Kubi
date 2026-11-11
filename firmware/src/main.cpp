@@ -18,6 +18,8 @@
 #include "AmbientFace.h"
 #include "MazeGame.h"
 #include "KubiScenes.h"
+#include "Battery.h"
+#include "SceneSchedule.h"
 
 // =============================================================================
 // KUBI: DESK COMPANION CUBE (ESP32 DUAL-CORE ARCHITECTURE)
@@ -26,7 +28,9 @@
 // --- SHARED RUNTIME STATE GLOBALS ---
 volatile KubiMode currentMode            = MODE_CLOCK_IDLE; // Active face mode
 volatile float    roomTemperature        = 21.5f;           // BMP280 temperature
-volatile int      batteryPercentage      = 100;             // Battery telemetry
+volatile float    roomPressure           = 0.0f;            // BMP280 pressure, hPa
+volatile int      batteryPercentage      = 100;             // From the cell voltage (Battery.h)
+volatile float    batteryVoltage         = 0.0f;            // Smoothed cell voltage, 0 until the first read
 volatile bool     isScreenOverrideActive = false;           // Brother's secret text alert flag
 volatile bool     factoryResetRequested  = false;           // Set by POST /api/factory-reset
 volatile bool     otaInProgress          = false;           // Set by the OTA callbacks (loop() task)
@@ -67,13 +71,16 @@ bool clockAnalogView = false;
 // --- FACE 3 ---
 int mascotSceneIndex = 0; // Diorama on the Mascot face, 0..ALL_KUBI_SCENE_COUNT-1
 
-// Tap steps forward through the dioramas, shake steps back.
-static void stepMascotScene(int delta) {
-  int n = (int)ALL_KUBI_SCENE_COUNT;
-  if (n == 0) return;
-  mascotSceneIndex = ((mascotSceneIndex + delta) % n + n) % n;
+// Kubi picks the scene himself (SceneSchedule.h). The dashboard can show one
+// for KUBI_SCENE_PREVIEW_MS: API.cpp sets these, the hardware loop applies them.
+volatile int      mascotPreviewScene = -1;
+volatile uint32_t mascotPreviewAt    = 0;
+volatile int      birthdayMMDD       = 0;  // NVS "bday", 0 = not set
+
+// Tap or shake on Face 3: Kubi notices (blinks); the scene stays his choice
+static void pokeMascot() {
+  display.pokeScene();
   audio.playChime(CHIME_TAP_FEEDBACK);
-  Serial.printf("[MASCOT] Scene %d\n", mascotSceneIndex);
 }
 
 // --- FACE 4 ---
@@ -352,6 +359,62 @@ void performFactoryReset() {
   ESP.restart();
 }
 
+// --- BATTERY ---
+// GPIO 34 (ADC1, so it works alongside WiFi) reads the cell through R1/R2.
+#define BATTERY_SENSE_PIN   34
+#define BATTERY_READ_MS     2000
+// Smoothing, charging detection and the time estimate: BatteryMonitor (Battery.h)
+static BatteryMonitor battery;
+volatile int batteryStateCode   = BATTERY_DRAINING; // BatteryState, for the API
+volatile int batteryMinutesLeft = -1;
+// Charge reminders (NVS "alertHi"/"alertLo", 0 = off): Kubi chimes and shows
+// a banner once per charge or discharge. The charger itself always fills to 100%.
+volatile int chargeAlertHigh = 0;
+volatile int chargeAlertLow  = 0;
+
+static float readBatteryVolts() {
+  uint32_t mv = 0;
+  for (int i = 0; i < 32; i++) mv += analogReadMilliVolts(BATTERY_SENSE_PIN);
+  return (mv / 32.0f) / 1000.0f / BATTERY_DIVIDER_RATIO;
+}
+
+static void batteryReminder(const char* text) {
+  setOverrideText(text);
+  isScreenOverrideActive = true; // tap dismisses it, like any banner
+  display.requestWake();
+  audio.playChime(CHIME_WAKE_PING);
+  Serial.printf("[BATTERY] %s\n", text);
+}
+
+static void updateBattery() {
+  static bool highDone = false, lowDone = false;
+  static BatteryState lastState = BATTERY_DRAINING;
+
+  battery.update(readBatteryVolts(), millis());
+  batteryVoltage = battery.voltage();
+  batteryPercentage = battery.percent();
+  batteryStateCode = battery.state();
+  batteryMinutesLeft = battery.minutesLeft();
+
+  BatteryState st = battery.state();
+  if (st != lastState) {
+    if (st == BATTERY_DRAINING) highDone = false; // unplugged: arm the unplug reminder for next time
+    else lowDone = false;                         // plugged in: arm the low reminder
+    lastState = st;
+  }
+  char msg[48];
+  if (chargeAlertHigh > 0 && st != BATTERY_DRAINING && !highDone && batteryPercentage >= chargeAlertHigh) {
+    highDone = true;
+    snprintf(msg, sizeof(msg), "Battery %d%% - unplug me!", batteryPercentage);
+    batteryReminder(msg);
+  }
+  if (chargeAlertLow > 0 && st == BATTERY_DRAINING && !lowDone && batteryPercentage <= chargeAlertLow) {
+    lowDone = true;
+    snprintf(msg, sizeof(msg), "Battery %d%% - plug me in!", batteryPercentage);
+    batteryReminder(msg);
+  }
+}
+
 // =============================================================================
 // CORE 1 TASK: HARDWARE, SENSORS & UI LOOP
 // High-frequency (~50-60Hz) hardware orchestration: IMU, Audio, Display
@@ -359,6 +422,7 @@ void performFactoryReset() {
 void core1HardwareTask(void * parameter) {
   uint32_t lastRenderTime = 0;
   uint32_t lastPomoTick   = 0;
+  uint32_t lastBatteryRead = 0;
   uint32_t lastMotionSeen = 0;
   int previousFace = -1;
   bool mazeWasActive = false;
@@ -402,6 +466,11 @@ void core1HardwareTask(void * parameter) {
     // 3. Read live telemetry
     sensors.getAcceleration((float&)diagAccelX, (float&)diagAccelY, (float&)diagAccelZ);
     roomTemperature = sensors.getTemperature();
+    roomPressure = sensors.getPressure();
+    if (lastBatteryRead == 0 || now - lastBatteryRead >= BATTERY_READ_MS) {
+      lastBatteryRead = now;
+      updateBattery();
+    }
 
     // 4. Orientation / Face Up State Machine
     int activeFace = sensors.getActiveFace();
@@ -466,7 +535,7 @@ void core1HardwareTask(void * parameter) {
             } else if (currentMode == MODE_AMBIENT && !face4Maze) {
               ambient.nextColour(); // silent: this face is for dark rooms
             } else if (currentMode == MODE_MASCOT_ROUTINE) {
-              stepMascotScene(+1);
+              pokeMascot();
             }
             break;
 
@@ -482,7 +551,7 @@ void core1HardwareTask(void * parameter) {
               audio.playChime(CHIME_TAP_FEEDBACK);
               Serial.printf("[CLOCK] Shake detected -> Switched to %s clock view (saved to NVS)\n", clockAnalogView ? "analog" : "digital");
             } else if (currentMode == MODE_MASCOT_ROUTINE) {
-              stepMascotScene(-1);
+              pokeMascot();
             }
             break;
 
@@ -523,12 +592,24 @@ void core1HardwareTask(void * parameter) {
         struct tm timeinfo;
         int currentHour = 12, currentMin = 0;
         int currentWday = 4, currentMday = 3, currentMon = 8;
-        if (getLocalTime(&timeinfo)) {
+        bool timeValid = getLocalTime(&timeinfo);
+        if (timeValid) {
           currentHour = timeinfo.tm_hour;
           currentMin = timeinfo.tm_min;
           currentWday = timeinfo.tm_wday;
           currentMday = timeinfo.tm_mday;
           currentMon = timeinfo.tm_mon;
+        }
+
+        // Kubi's scene pick, kept current on every face so the dashboard can show it
+        if (mascotPreviewScene >= 0 && now - mascotPreviewAt < KUBI_SCENE_PREVIEW_MS) {
+          mascotSceneIndex = mascotPreviewScene;
+        } else {
+          mascotPreviewScene = -1;
+          if (timeValid) {
+            mascotSceneIndex = kubiScheduledScene(currentMon, currentMday, currentWday, currentHour, currentMin,
+                                                  roomTemperature, birthdayMMDD);
+          }
         }
 
         switch (currentMode) {
@@ -643,6 +724,9 @@ void setup() {
   preferences.begin("kubi_settings", false);
   tzOffset        = preferences.getInt("tzOffset", 2);
   clockAnalogView = preferences.getBool("clockAnalog", false);
+  birthdayMMDD = preferences.getInt("bday", 0);
+  chargeAlertHigh = preferences.getInt("alertHi", 0);
+  chargeAlertLow = preferences.getInt("alertLo", 0);
   face4Maze       = preferences.getBool("face4Maze", false);
   display.setSleepTimeoutMinutes(preferences.getInt("sleepMin", 5));
   audio.setVolume(preferences.getInt("volume", 25) / 100.0f); // dashboard "Sound"

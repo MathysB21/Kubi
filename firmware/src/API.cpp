@@ -13,10 +13,23 @@
 extern volatile KubiMode currentMode;
 extern volatile float roomTemperature;
 extern volatile int batteryPercentage;
+extern volatile float batteryVoltage;
+extern volatile int batteryStateCode;
+extern volatile int batteryMinutesLeft;
+extern volatile int chargeAlertHigh;
+extern volatile int chargeAlertLow;
+extern volatile float roomPressure;
+
+static const char* batteryStateName(int s) {
+    return s == 2 ? "full" : s == 1 ? "charging" : "draining";
+}
 extern volatile bool isScreenOverrideActive;
 extern volatile bool factoryResetRequested;
 extern bool clockAnalogView;
 extern int mascotSceneIndex;
+extern volatile int mascotPreviewScene;
+extern volatile uint32_t mascotPreviewAt;
+extern volatile int birthdayMMDD;
 
 // Diagnostics
 extern volatile float diagAccelX;
@@ -37,7 +50,19 @@ void setupAPIRoutes(AsyncWebServer& server) {
         doc["mode"] = (int)currentMode;
         doc["temp"] = roomTemperature;
         doc["battery"] = batteryPercentage;
+        doc["batteryVoltage"] = roundf(batteryVoltage * 100.0f) / 100.0f;
+        doc["batteryState"] = batteryStateName(batteryStateCode);
+        doc["batteryMinutes"] = batteryMinutesLeft; // to empty or to full, -1 = still estimating
+        doc["pressure"] = roundf(roomPressure * 10.0f) / 10.0f;
+        doc["chargeAlertHigh"] = chargeAlertHigh;
+        doc["chargeAlertLow"] = chargeAlertLow;
         doc["mascotScene"] = mascotSceneIndex;
+        doc["mascotPreview"] = mascotPreviewScene >= 0; // false: Kubi's own pick
+        if (birthdayMMDD > 0) {
+            char bday[8];
+            snprintf(bday, sizeof(bday), "%02d-%02d", birthdayMMDD / 100, birthdayMMDD % 100);
+            doc["birthday"] = bday;
+        }
 
         // Detailed Pomodoro State
         JsonObject pomoObj = doc["pomodoro"].to<JsonObject>();
@@ -128,11 +153,44 @@ void setupAPIRoutes(AsyncWebServer& server) {
             prefs.end();
         }
 
-        // Mascot diorama scene. Like face4Maze, the hardware loop sees the
-        // change and repaints; nothing here touches the display.
+        // Mascot diorama scene: a preview for KUBI_SCENE_PREVIEW_MS, then Kubi
+        // picks his own again (-1 hands back at once). Like face4Maze, the
+        // hardware loop applies it; nothing here touches the display.
         if (jsonObj["mascotScene"].is<int>() && ALL_KUBI_SCENE_COUNT > 0) {
             int n = (int)ALL_KUBI_SCENE_COUNT;
-            mascotSceneIndex = ((jsonObj["mascotScene"].as<int>() % n) + n) % n;
+            int want = jsonObj["mascotScene"].as<int>();
+            if (want < 0) {
+                mascotPreviewScene = -1;
+            } else {
+                mascotPreviewAt = millis();
+                mascotPreviewScene = want % n;
+                mascotSceneIndex = want % n;
+            }
+        }
+
+        // Charge reminders: 0 = off, else the percent to remind at
+        for (const char* key : { "chargeAlertHigh", "chargeAlertLow" }) {
+            if (!jsonObj[key].is<int>()) continue;
+            int pct = jsonObj[key].as<int>();
+            pct = pct <= 0 ? 0 : (pct > 100 ? 100 : pct);
+            bool high = key[11] == 'H';
+            if (high) chargeAlertHigh = pct; else chargeAlertLow = pct;
+            Preferences prefs;
+            prefs.begin("kubi_settings", false);
+            prefs.putInt(high ? "alertHi" : "alertLo", pct);
+            prefs.end();
+        }
+
+        // Wilhelm's birthday, "MM-DD" ("" clears it): the Birthday scene's day
+        if (jsonObj["birthday"].is<const char*>()) {
+            const char* b = jsonObj["birthday"].as<const char*>();
+            int mm = 0, dd = 0;
+            int value = (sscanf(b, "%d-%d", &mm, &dd) == 2 && mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) ? mm * 100 + dd : 0;
+            birthdayMMDD = value;
+            Preferences prefs;
+            prefs.begin("kubi_settings", false);
+            prefs.putInt("bday", value);
+            prefs.end();
         }
 
         // Face 4: Ambient (false) or Maze (true). The hardware loop notices the
@@ -228,6 +286,12 @@ void setupAPIRoutes(AsyncWebServer& server) {
         doc["accelZ"] = diagAccelZ;
         doc["temp"] = roomTemperature;
         doc["battery"] = batteryPercentage;
+        doc["batteryVoltage"] = roundf(batteryVoltage * 100.0f) / 100.0f;
+        doc["batteryState"] = batteryStateName(batteryStateCode);
+        doc["batteryMinutes"] = batteryMinutesLeft; // to empty or to full, -1 = still estimating
+        doc["pressure"] = roundf(roomPressure * 10.0f) / 10.0f;
+        doc["chargeAlertHigh"] = chargeAlertHigh;
+        doc["chargeAlertLow"] = chargeAlertLow;
         doc["rssi"] = WiFi.RSSI();
         doc["freeHeap"] = ESP.getFreeHeap();
         doc["uptime"] = millis() / 1000;

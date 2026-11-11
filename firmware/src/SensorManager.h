@@ -28,6 +28,7 @@ public:
     void setFaceSettleTime(uint32_t ms) { _faceSettleMs = ms; }
     KubiGesture getRecentGesture(); // Returns and clears last gesture
     float getTemperature() const { return _temperature; }
+    float getPressure() const { return _pressure; } // hPa, 0 until the first read
     // millis() of the last movement above the wake threshold (0 = none yet)
     uint32_t getLastMotionTime() const { return _lastMotionTime; }
 
@@ -48,6 +49,7 @@ private:
     uint32_t _lastPollTime;
     uint32_t _lastTempReadTime;
     float _temperature;
+    float _pressure;
 
     int _activeFace;
     KubiGesture _recentGesture;
