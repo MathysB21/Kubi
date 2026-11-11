@@ -102,5 +102,5 @@ Paste the output to Claude to update `FaceMap.h`, flash over WiFi, and check tha
 ## After assembly (firmware)
 
 - Battery percentage and a low-battery shutdown at ~3.3 V, now that the divider on GPIO 34 exists (TSK-391).
-- Tune DAC_RAMP_IN_MS / DAC_RAMP_OUT_MS if the speakers thump.
+- If the speakers thump about 2 s after power-on, lengthen DAC_RAMP_IN_MS (the one fade up to the DAC's playing level).
 - Later, optional parts: a slide switch in the TP4056 OUT+ to MT3608 IN+ wire (on/off), and load sharing so the cells are not held at 4.2 V while it lives plugged in.

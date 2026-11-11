@@ -11,12 +11,13 @@
 #define SAMPLE_RATE  22050
 
 // Internal DAC only. Silence there is mid-scale (1.65 V) while sound plays,
-// but the DMA idles at 0 V; a 1.65 V step through the amp's ~24 dB is a loud
-// pop at every chime. So the level fades up before the first note and back
-// down after the last, slowly enough to sit below what the amp's input
-// coupling and the speakers pass. Tune on the real speaker if a thump remains.
-#define DAC_RAMP_IN_MS   60
-#define DAC_RAMP_OUT_MS  200
+// but the DMA idles at 0 V. Any move between the two goes through the amp's
+// ~24 dB as a speaker kick: fading it in 60 ms around every chime drew enough
+// current on the real cube to brown out the ESP32 when it landed on WiFi
+// start-up (2026-11-11). So the level fades up once, slowly, after boot and
+// then holds at mid-scale for good: pump() keeps writing silence, the DMA
+// never falls back to 0 V, and chimes start and stop without a step.
+#define DAC_RAMP_IN_MS   2000
 // The DAC path has the amp's ~24 dB gain after it and no gain stage of the
 // library's (that is kept at 1.0 so the fades can reach 0 V), so the tone is
 // scaled here: at the default volume this is about +/-4 DAC steps, ~0.2 W
@@ -209,8 +210,9 @@ bool AudioManager::pump() {
         _handledSeq = seq;
     }
 
-    // Idle: nothing to play and (DAC) already faded down to the DMA's 0 V
-    if (!_sequence && (!_dacMode || _dcLevel <= 0.0f)) return false;
+    // Idle: nothing to play. I2S falls silent on its own (tx_desc_auto_clear);
+    // the DAC is never idle, it holds mid-scale (see DAC_RAMP_IN_MS).
+    if (!_sequence && !_dacMode) return false;
 
     if (!_ready) {
         // Output is dead: drop the chime so isPlaying() does not stick.
@@ -219,13 +221,13 @@ bool AudioManager::pump() {
         return false;
     }
 
-    const float rampIn  = 1000.0f / (DAC_RAMP_IN_MS * (float)SAMPLE_RATE);
-    const float rampOut = 1000.0f / (DAC_RAMP_OUT_MS * (float)SAMPLE_RATE);
+    const float rampIn = 1000.0f / (DAC_RAMP_IN_MS * (float)SAMPLE_RATE);
 
     for (int i = 0; i < PUMP_BLOCK_FRAMES; i++) {
         int32_t val;
-        if (_sequence && _dcLevel < 1.0f) {
-            // DAC: fade up to mid-scale before the first note
+        if (_dcLevel < 1.0f) {
+            // DAC: the one fade from 0 V up to mid-scale after boot; a chime
+            // requested meanwhile (the boot chime) waits for it
             _dcLevel += rampIn;
             if (_dcLevel > 1.0f) _dcLevel = 1.0f;
             val = dcOffset();
@@ -234,7 +236,7 @@ bool AudioManager::pump() {
                 _noteIdx++;
                 if (_sequence[_noteIdx].durationMs == 0) {
                     // Sequence complete. I2S: tx_desc_auto_clear gives
-                    // silence after the tail drains. DAC: fade down first.
+                    // silence after the tail drains. DAC: hold mid-scale.
                     _sequence = nullptr;
                     _activeChime = CHIME_NONE;
                     if (!_dacMode) return true;
@@ -245,9 +247,7 @@ bool AudioManager::pump() {
             val = dcOffset() + toneSample();
             _noteSamplesLeft--;
         } else {
-            // DAC: fade back down to 0 V, where the idle DMA leaves it
-            _dcLevel -= rampOut;
-            if (_dcLevel < 0.0f) _dcLevel = 0.0f;
+            // DAC between chimes: silence at mid-scale
             val = dcOffset();
         }
 
@@ -258,7 +258,6 @@ bool AudioManager::pump() {
             _ready = false;
             return true;
         }
-        if (!_sequence && _dcLevel <= 0.0f) return true;
     }
     return true;
 }

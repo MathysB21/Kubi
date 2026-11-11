@@ -31,7 +31,8 @@ public:
 
     // Renders one block and pushes it to I2S, waiting (1 ms yields) while the
     // DMA queue is full, so the caller is paced by the real sample clock.
-    // Returns false when idle; the caller should then sleep a few ms.
+    // Returns false when idle; the caller should then sleep a few ms. With the
+    // internal DAC it is never idle once started: it keeps writing silence.
     bool pump();
 
     void playChime(KubiChime chime);
@@ -60,10 +61,10 @@ private:
     uint32_t _phase;
     uint32_t _phaseInc;
 
-    // KUBI_AUDIO_INTERNAL_DAC: the ESP32 DAC idles at 0 V but plays around
-    // mid-scale, so the level fades between the two around each chime.
+    // KUBI_AUDIO_INTERNAL_DAC: the ESP32 DAC starts at 0 V but plays around
+    // mid-scale, so the level fades up once after boot and then stays there.
     bool _dacMode;
-    float _dcLevel; // 0 = DAC at 0 V (idle), 1 = mid-scale (playing); stays 1 for I2S
+    float _dcLevel; // 0 = DAC at 0 V (boot), 1 = mid-scale (from then on); 1 for I2S
 
     void startSequence(KubiChime chime);
     void loadNote();
