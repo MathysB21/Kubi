@@ -10,18 +10,21 @@
 #define I2S_DIN_PIN  27
 #define SAMPLE_RATE  22050
 
-// Internal DAC only. Silence there is mid-scale (1.65 V) while sound plays,
-// but the DMA idles at 0 V. Any move between the two goes through the amp's
-// ~24 dB as a speaker kick: fading it in 60 ms around every chime drew enough
-// current on the real cube to brown out the ESP32 when it landed on WiFi
-// start-up (2026-11-11). So the level fades up once, slowly, after boot and
-// then holds at mid-scale for good: pump() keeps writing silence, the DMA
-// never falls back to 0 V, and chimes start and stop without a step.
-#define DAC_RAMP_IN_MS   2000
-// The DAC path has the amp's ~24 dB gain after it and no gain stage of the
-// library's (that is kept at 1.0 so the fades can reach 0 V), so the tone is
-// scaled here: at the default volume this is about +/-4 DAC steps, ~0.2 W
-// into 4 ohm with the PAM8403's knob fully up. Its knob sets the rest.
+// Internal DAC only: the DAC rests at 0 V and a chime is a pulse wave from
+// 0 V up, never a square wave around a raised level. History, measured on the
+// real cube (2026-11-11), because both obvious alternatives fail:
+//  - Fading to mid-scale around each chime: the fade went through the amp's
+//    ~24 dB as a speaker kick, and with WiFi start-up it browned out the ESP32.
+//  - Holding a raised level between chimes: whenever a flash write (OTA, NVS,
+//    LittleFS) stalls the audio task, the DMA underruns and tx_desc_auto_clear
+//    drops the DAC to 0 V; at a high knob setting that kick tripped the
+//    charger's battery protection. A raised level also carries the 3.3 V
+//    rail's noise (the DAC divides that rail), heard as static with a beat.
+// At 0 V an underrun changes nothing, the rail noise is ~0, and the only step
+// a chime makes is the tone's own edge. Peak-to-peak is the same as before.
+// The tone is scaled here (the library gain stays 1.0): at the default volume
+// a pulse is about 9 DAC steps high, ~35 at full volume, ~0.2 W into 4 ohm
+// with the PAM8403's knob fully up. Its knob sets the rest.
 #define DAC_VOLUME_SCALE 0.5f
 
 AudioManager audio;
@@ -100,11 +103,9 @@ AudioManager::AudioManager()
       _phase(0),
       _phaseInc(0),
 #ifdef KUBI_AUDIO_INTERNAL_DAC
-      _dacMode(true),
-      _dcLevel(0.0f) {}
+      _dacMode(true) {}
 #else
-      _dacMode(false),
-      _dcLevel(1.0f) {}
+      _dacMode(false) {}
 #endif
 
 bool AudioManager::init() {
@@ -184,22 +185,24 @@ bool AudioManager::writeFrame(int16_t value) {
     return true;
 }
 
-// Square-wave sample of the current note, at the current volume
+// The DAC's 0 V as a sample: the library adds 0x8000 and the DAC takes the
+// high byte, so -32768 is code 0, the same level the idle DMA writes.
+#define DAC_ZERO_SAMPLE (-32768)
+
+// Sample of the current note at the current volume. I2S: a square wave
+// around 0. DAC: a pulse wave between 0 V and twice the amplitude, so rests,
+// gaps and the end of a chime all sit at the idle 0 V.
 int16_t AudioManager::toneSample() {
+    if (_dacMode) {
+        int32_t amp = (int32_t)(SQUARE_AMPLITUDE * _gain * DAC_VOLUME_SCALE);
+        bool high = _phaseInc && (_phase < 0x80000000u);
+        _phase += _phaseInc;
+        return (int16_t)(DAC_ZERO_SAMPLE + (high ? 2 * amp : 0));
+    }
     if (!_phaseInc) return 0;
-    int32_t amp = _dacMode ? (int32_t)(SQUARE_AMPLITUDE * _gain * DAC_VOLUME_SCALE) : SQUARE_AMPLITUDE;
-    int16_t val = (_phase < 0x80000000u) ? amp : -amp;
+    int16_t val = (_phase < 0x80000000u) ? SQUARE_AMPLITUDE : -SQUARE_AMPLITUDE;
     _phase += _phaseInc;
     return val;
-}
-
-// DAC idle level as a sample: _dcLevel 0 is the DMA's idle 0 V (-32768 after
-// the library's +0x8000), 1 is mid-scale. Raised-cosine shape, so the fade
-// starts and ends without a corner.
-int16_t AudioManager::dcOffset() const {
-    if (!_dacMode) return 0;
-    float shape = 0.5f - 0.5f * cosf(3.14159265f * _dcLevel);
-    return (int16_t)(-32768.0f * (1.0f - shape));
 }
 
 bool AudioManager::pump() {
@@ -210,9 +213,9 @@ bool AudioManager::pump() {
         _handledSeq = seq;
     }
 
-    // Idle: nothing to play. I2S falls silent on its own (tx_desc_auto_clear);
-    // the DAC is never idle, it holds mid-scale (see DAC_RAMP_IN_MS).
-    if (!_sequence && !_dacMode) return false;
+    // Idle: nothing to play. The DMA falls silent on its own once its tail
+    // drains (tx_desc_auto_clear): 0 for I2S, 0 V for the DAC.
+    if (!_sequence) return false;
 
     if (!_ready) {
         // Output is dead: drop the chime so isPlaying() does not stick.
@@ -221,39 +224,21 @@ bool AudioManager::pump() {
         return false;
     }
 
-    const float rampIn = 1000.0f / (DAC_RAMP_IN_MS * (float)SAMPLE_RATE);
-
     for (int i = 0; i < PUMP_BLOCK_FRAMES; i++) {
-        int32_t val;
-        if (_dcLevel < 1.0f) {
-            // DAC: the one fade from 0 V up to mid-scale after boot; a chime
-            // requested meanwhile (the boot chime) waits for it
-            _dcLevel += rampIn;
-            if (_dcLevel > 1.0f) _dcLevel = 1.0f;
-            val = dcOffset();
-        } else if (_sequence) {
-            if (_noteSamplesLeft == 0) {
-                _noteIdx++;
-                if (_sequence[_noteIdx].durationMs == 0) {
-                    // Sequence complete. I2S: tx_desc_auto_clear gives
-                    // silence after the tail drains. DAC: hold mid-scale.
-                    _sequence = nullptr;
-                    _activeChime = CHIME_NONE;
-                    if (!_dacMode) return true;
-                    continue;
-                }
-                loadNote();
+        if (_noteSamplesLeft == 0) {
+            _noteIdx++;
+            if (_sequence[_noteIdx].durationMs == 0) {
+                // Sequence complete; the DMA's auto-clear does the rest
+                _sequence = nullptr;
+                _activeChime = CHIME_NONE;
+                return true;
             }
-            val = dcOffset() + toneSample();
-            _noteSamplesLeft--;
-        } else {
-            // DAC between chimes: silence at mid-scale
-            val = dcOffset();
+            loadNote();
         }
+        int16_t val = toneSample();
+        _noteSamplesLeft--;
 
-        if (val > 32767) val = 32767;
-        if (val < -32768) val = -32768;
-        if (!writeFrame((int16_t)val)) {
+        if (!writeFrame(val)) {
             Serial.println("[AUDIO] ERROR: I2S queue stalled, chimes disabled");
             _ready = false;
             return true;

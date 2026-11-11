@@ -102,5 +102,5 @@ Paste the output to Claude to update `FaceMap.h`, flash over WiFi, and check tha
 ## After assembly (firmware)
 
 - Battery percentage and a low-battery shutdown at ~3.3 V, now that the divider on GPIO 34 exists (TSK-391).
-- If the speakers thump about 2 s after power-on, lengthen DAC_RAMP_IN_MS (the one fade up to the DAC's playing level).
+- The DAC rests at 0 V between chimes (see AudioManager.cpp): never give it a raised resting level or a fade, both kicked the speakers hard enough to reset the ESP32 or trip the battery protection.
 - Later, optional parts: a slide switch in the TP4056 OUT+ to MT3608 IN+ wire (on/off), and load sharing so the cells are not held at 4.2 V while it lives plugged in.
