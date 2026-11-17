@@ -9,6 +9,8 @@
 #include "AudioManager.h"
 #include "KubiScenes.h"
 #include "SceneSchedule.h"
+#include "SensorManager.h"
+#include <esp_system.h>
 
 // --- SHARED GLOBALS (Defined in main.cpp) ---
 extern volatile KubiMode currentMode;
@@ -298,6 +300,55 @@ void setupAPIRoutes(AsyncWebServer& server) {
     server.addHandler(chimeHandler);
 
     // =========================================================================
+    // 4c. Motion recorder, for tuning gestures on the real cube
+    // POST /api/motion-log {"seconds": 1-30} starts a recording.
+    // GET  /api/motion-log: {"state":0|1} while idle or recording; once done,
+    // CSV "t,x,y,z,delta,total,flags" (ms; centi-m/s^2; MotionFlag bits).
+    // =========================================================================
+    AsyncCallbackJsonWebHandler* motionLogStart = new AsyncCallbackJsonWebHandler("/api/motion-log", [](AsyncWebServerRequest *request, JsonVariant &json) {
+        int seconds = json["seconds"] | 20;
+        if (seconds < 1) seconds = 1;
+        if (seconds > 30) seconds = 30;
+        sensors.requestMotionLog((uint16_t)seconds);
+        request->send(200, "application/json", "{\"status\":\"recording\"}");
+    });
+    motionLogStart->setMethod(HTTP_POST); // GET below downloads the log
+    server.addHandler(motionLogStart);
+    server.on("/api/motion-log", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (sensors.motionLogState() != 2) {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "{\"state\":%d}", sensors.motionLogState());
+            request->send(200, "application/json", buf);
+            return;
+        }
+        // Chunked: up to 1500 lines would not fit one buffer
+        AsyncWebServerResponse* response = request->beginChunkedResponse("text/csv",
+            [](uint8_t* out, size_t maxLen, size_t index) -> size_t {
+                static int row = 0;
+                if (index == 0) row = -1; // header first
+                int count = 0;
+                const MotionSample* log = sensors.motionLog(count);
+                size_t len = 0;
+                while (row < count) {
+                    char line[64];
+                    int n;
+                    if (row < 0) n = snprintf(line, sizeof(line), "t,x,y,z,delta,total,flags\n");
+                    else {
+                        const MotionSample& m = log[row];
+                        n = snprintf(line, sizeof(line), "%lu,%d,%d,%d,%d,%d,%u\n", (unsigned long)m.t,
+                                     m.x, m.y, m.z, m.delta, m.total, (unsigned)m.flags);
+                    }
+                    if (len + n > maxLen) break;
+                    memcpy(out + len, line, n);
+                    len += n;
+                    row++;
+                }
+                return len;
+            });
+        request->send(response);
+    });
+
+    // =========================================================================
     // 5. GET /api/diagnostics
     // Real-time telemetry: IMU axes, temperature, battery, WiFi signal
     // =========================================================================
@@ -319,6 +370,12 @@ void setupAPIRoutes(AsyncWebServer& server) {
         doc["rssi"] = WiFi.RSSI();
         doc["freeHeap"] = ESP.getFreeHeap();
         doc["uptime"] = millis() / 1000;
+        // Why the last restart happened (an unexpected one shows as panic,
+        // brownout or watchdog rather than poweron/software)
+        static const char* const RESET_NAMES[] = { "unknown", "poweron", "external", "software", "panic",
+            "int_wdt", "task_wdt", "wdt", "deepsleep", "brownout", "sdio" };
+        int rr = (int)esp_reset_reason();
+        doc["resetReason"] = (rr >= 0 && rr <= 10) ? RESET_NAMES[rr] : "other";
         doc["mode"] = (int)currentMode;
 
         serializeJson(doc, *response);

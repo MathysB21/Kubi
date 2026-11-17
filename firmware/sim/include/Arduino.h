@@ -33,7 +33,15 @@ typedef bool boolean;
 typedef uint8_t byte;
 
 // Millis and Micros
+// Test harnesses can freeze the clock and step it themselves (e.g. replaying a
+// recorded /api/motion-log through SensorManager at its original timing):
+// set simFakeMillis() to a value >= 0. -1 (the default) is the real clock.
+inline long long& simFakeMillis() {
+    static long long fake = -1;
+    return fake;
+}
 inline uint32_t millis() {
+    if (simFakeMillis() >= 0) return (uint32_t)simFakeMillis();
     static auto start = std::chrono::steady_clock::now();
     auto now = std::chrono::steady_clock::now();
     return (uint32_t)std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count();
