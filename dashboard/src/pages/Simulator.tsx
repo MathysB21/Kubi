@@ -27,6 +27,7 @@ import {
   Sunset,
   Laptop,
   Dumbbell,
+  Gamepad2,
 } from "lucide-react";
 import { playSimChime } from "../lib/audioChimes";
 import KubiDashboardApp from "../App";
@@ -221,7 +222,8 @@ export default function Simulator() {
   // Face change
   const setFace = (faceIdx: number) => {
     setActiveFace(faceIdx);
-    setSimState((prev) => (prev ? { ...prev, rotation: faceIdx, mode: faceIdx } : null));
+    // Screen up (4) keeps the last upright face's rotation: the firmware reports it
+    setSimState((prev) => (prev ? { ...prev, rotation: faceIdx === 4 ? prev.rotation : faceIdx, mode: faceIdx } : null));
     inject({ face: faceIdx });
   };
 
@@ -436,7 +438,7 @@ export default function Simulator() {
                   </span>
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                   {[
                     {
                       id: 0,
@@ -465,6 +467,13 @@ export default function Simulator() {
                       mode: "Ambient Glow",
                       desc: "Slow colour glow for a dark room",
                       icon: Sparkles,
+                    },
+                    {
+                      id: 4,
+                      title: "Screen UP",
+                      mode: "Tilt Maze",
+                      desc: "On his back; faces the last upright face's viewer",
+                      icon: Gamepad2,
                     },
                   ].map((face) => {
                     const Icon = face.icon;
@@ -603,7 +612,7 @@ export default function Simulator() {
                     Continuous Tilt
                   </h3>
                   <span className="text-xs text-zinc-400">
-                    Relative to the current face resting flat
+                    Relative to the current face at rest (on his back: pitch + = top edge down)
                   </span>
                 </div>
                 <div className="p-4 rounded-xl bg-zinc-900/60 border border-zinc-800">

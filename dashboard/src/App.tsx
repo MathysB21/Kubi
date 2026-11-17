@@ -33,6 +33,7 @@ import {
   PlugZap,
   Image,
   Power,
+  Gamepad2,
 } from "lucide-react";
 import { Accordion } from "./components/Accordion";
 import {
@@ -45,6 +46,7 @@ import {
 import { Toaster, toast } from "sonner";
 import { useEffect, useState } from "react";
 import { SpinningCube } from "./components/SpinningCube";
+import { CreatorPanel } from "./components/CreatorPanel";
 import { Link } from "react-router";
 
 // Detailed Pomodoro state
@@ -73,7 +75,6 @@ interface KubiState {
   battery: number;
   sleepTimeoutMin?: number;
   volume?: number; // chime volume, 0-100
-  face4Maze?: boolean;
   isSleeping?: boolean;
   batteryVoltage?: number;
   batteryState?: "draining" | "charging" | "full";
@@ -83,6 +84,7 @@ interface KubiState {
   chargeAlertLow?: number; // 0 = off
   mascotScene?: number;
   mascotPreview?: boolean; // true while a scene picked here is showing
+  mascotPreviewLeftMin?: number; // minutes left on that preview
   pomodoro: PomodoroState;
   [key: string]: any;
 }
@@ -116,6 +118,9 @@ const FACE_MODES = [
   { id: 2, name: "Face 3: Mascot & Temp", desc: "Kubi routine & room telemetry", icon: Smile },
   { id: 3, name: "Face 4: Ambient", desc: "Slow colour glow for a dark room", icon: Sparkles },
 ];
+// Lying on its back, screen to the sky. Not in the selector: only lying
+// Kubi down opens it.
+const MAZE_MODE = { id: 4, name: "Screen up: Tilt Maze", desc: "Lay Kubi on his back and tilt", icon: Gamepad2 };
 
 // Minutes of inactivity before the Mascot face turns its screen off (0 = never)
 // The Mascot face's scenes, by firmware index. Birthday (1) and Christmas (2)
@@ -227,6 +232,36 @@ function KubiDashboard() {
     if (alertLowDraft !== null && data.chargeAlertLow === alertLowDraft) setAlertLowDraft(null);
   }, [data.chargeAlertLow, alertLowDraft]);
 
+  // Creator panel (the brother's backdoor): five taps on the title within 3 s
+  // open or hide it. Remembered in this browser only; storage can be blocked.
+  const [creatorOpen, setCreatorOpen] = useState(() => {
+    try {
+      return localStorage.getItem("kubi.creator") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [titleTaps, setTitleTaps] = useState<number[]>([]);
+  const setCreator = (open: boolean) => {
+    setCreatorOpen(open);
+    try {
+      if (open) localStorage.setItem("kubi.creator", "1");
+      else localStorage.removeItem("kubi.creator");
+    } catch {
+      /* per-browser convenience only */
+    }
+  };
+  const onTitleTap = () => {
+    const now = Date.now();
+    const taps = [...titleTaps.filter((t) => now - t < 3000), now];
+    if (taps.length >= 5) {
+      setTitleTaps([]);
+      setCreator(!creatorOpen);
+    } else {
+      setTitleTaps(taps);
+    }
+  };
+
   // Nap: Kubi goes dark and offline until picked up. Two taps so it cannot happen by accident.
   const [napArmed, setNapArmed] = useState(false);
   useEffect(() => {
@@ -286,7 +321,7 @@ function KubiDashboard() {
     },
   });
 
-  const activeFace = FACE_MODES[data.mode] || FACE_MODES[0];
+  const activeFace = data.mode === MAZE_MODE.id ? MAZE_MODE : FACE_MODES[data.mode] || FACE_MODES[0];
   // 4. Factory reset (two-step: the button only arms the confirm panel)
   const [resetArmed, setResetArmed] = useState(false);
   const factoryResetMutation = useMutation({
@@ -838,13 +873,24 @@ function KubiDashboard() {
 
         {/* HEADER */}
         <header className="space-y-1 mb-6 mt-4 text-center">
-          <h1 className="text-4xl font-medium tracking-[0.3em] text-center">
+          <h1 onClick={onTitleTap} className="text-4xl font-medium tracking-[0.3em] text-center select-none">
             KUBI
           </h1>
           <p className="text-zinc-500 text-sm tracking-wide text-center">
             Desk Companion
           </p>
         </header>
+
+        {creatorOpen && (
+          <div className="mb-6">
+            <CreatorPanel
+              mascotScene={data.mascotScene}
+              mascotPreview={data.mascotPreview}
+              mascotPreviewLeftMin={data.mascotPreviewLeftMin}
+              onClose={() => setCreator(false)}
+            />
+          </div>
+        )}
 
         {/* ================================================================= */}
         {/* DYNAMIC CONTEXTUAL SECTION (RESPONDS TO ACTIVE STATE OF CUBE)   */}
@@ -984,7 +1030,7 @@ function KubiDashboard() {
               </h2>
             </div>
             <span className="px-2.5 py-1 text-xs font-medium rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/30">
-              Face {data.mode + 1}
+              {data.mode === MAZE_MODE.id ? "Screen up" : `Face ${data.mode + 1}`}
             </span>
           </div>
 
@@ -1012,28 +1058,10 @@ function KubiDashboard() {
             })}
           </div>
 
-          {/* Face 4 content: Ambient (default) or the tilt maze */}
-          <div className="flex items-center justify-between pt-2 border-t border-zinc-800/80">
-            <span className="text-xs text-zinc-400">Face 4 shows</span>
-            <div className="flex rounded-xl border border-zinc-800 overflow-hidden text-xs font-medium">
-              {[
-                { maze: false, label: "Ambient" },
-                { maze: true, label: "Maze (beta)" },
-              ].map((opt) => (
-                <button
-                  key={opt.label}
-                  onClick={() => mutation.mutate({ face4Maze: opt.maze })}
-                  className={`px-3 py-1.5 cursor-pointer transition-colors ${
-                    !!data.face4Maze === opt.maze
-                      ? "bg-amber-500/15 text-amber-500"
-                      : "bg-zinc-950/60 text-zinc-500 hover:text-zinc-300"
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          </div>
+          <p className="flex items-center gap-2 pt-2 border-t border-zinc-800/80 text-xs text-zinc-500">
+            <Gamepad2 size={14} className="text-zinc-400" />
+            Lay Kubi on his back, screen to the sky, for the tilt maze.
+          </p>
         </section>
 
         {/* 2. ACCORDION (POMODORO, SLEEP, HARDWARE TELEMETRY) */}

@@ -1,19 +1,27 @@
 #pragma once
 #include <ESPAsyncWebServer.h>
+#include <string.h>
+#include <stdio.h>
+#include "AudioManager.h"
 
 // Kubi Orientation & Operating Modes
 enum KubiMode {
   MODE_CLOCK_IDLE       = 0, // Face 1 Up: digital or analog clock (shake toggles)
   MODE_POMODORO        = 1, // Face 2 Up: Focus timer with chimes
   MODE_MASCOT_ROUTINE  = 2, // Face 3 Up: Kubi jelly animations & room temperature
-  MODE_AMBIENT         = 3  // Face 4 Up: slow ambient glow (the maze may replace it)
+  MODE_AMBIENT         = 3, // Face 4 Up: slow ambient glow
+  MODE_MAZE            = 4  // Lying on its back, screen to the sky: tilt maze
 };
 
-// Face 4 shows Ambient by default; the maze replaces it when face4Maze is set
-// (kubi_settings/face4Maze, /api/settings). Go/no-go for shipping it: 2 Nov.
-extern bool face4Maze;
+// The maze is drawn the way the last upright face drew (mazeViewFace), so it
+// reads right for whoever tipped the cube back. The hardware loop keeps it.
+extern int mazeViewFace;
 inline bool mazeFaceActive(KubiMode mode) {
-  return mode == MODE_AMBIENT && face4Maze;
+  return mode == MODE_MAZE;
+}
+// The face whose screen rotation the display uses for this mode
+inline int rotationFaceFor(KubiMode mode) {
+  return mode == MODE_MAZE ? mazeViewFace : (int)mode;
 }
 
 // Faces that may sleep after the inactivity timeout (decided 21 Sep):
@@ -33,6 +41,31 @@ inline bool modeMaySleep(KubiMode mode) {
 #define OVERRIDE_TEXT_MAX 128
 void setOverrideText(const char* text);
 String getOverrideText();
+
+// POST /api/override {"title"?, "message"}: the banner text is "title\nmessage"
+// (DisplayManager::drawOverrideAlert splits it; no title = the alert title).
+// An empty message takes the banner down.
+inline void composeBanner(char* out, size_t n, const char* title, const char* message) {
+  if (title && *title) snprintf(out, n, "%s\n%s", title, message ? message : "");
+  else snprintf(out, n, "%s", message ? message : "");
+}
+
+// POST /api/chime {"chime": name}: the Creator panel plays any chime.
+// CHIME_NONE for an unknown name.
+inline KubiChime chimeByName(const char* name) {
+  if (!name) return CHIME_NONE;
+  if (!strcmp(name, "tap"))     return CHIME_TAP_FEEDBACK;
+  if (!strcmp(name, "done"))    return CHIME_POMODORO_DONE;
+  if (!strcmp(name, "fanfare")) return CHIME_POMODORO_LONG_BREAK;
+  if (!strcmp(name, "ping"))    return CHIME_WAKE_PING;
+  if (!strcmp(name, "ouch"))    return CHIME_SLAM_OUCH;
+  return CHIME_NONE;
+}
+
+// Scene previews: 10 minutes from the dashboard picker, longer from the
+// Creator panel ("mascotPreviewMin", 1..MAX). The screen stays awake while one
+// is showing.
+#define MASCOT_PREVIEW_MAX_MIN 720
 
 // First connect after setup: how long the "open kubi.local" screen stays up
 // unless tapped away.

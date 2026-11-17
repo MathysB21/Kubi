@@ -3,7 +3,11 @@
 #include <TFT_eSPI.h>
 #include "MazeBoards.h"
 
-// Face 4 (optional, replaces Ambient when face4Maze is set): tilt-maze game.
+// Tilt maze, played with the cube on its back, screen to the sky (MODE_MAZE).
+// It is drawn the way the last upright face was (setViewFace), so it reads
+// right for whoever tipped the cube back. In portrait views the 20x14 board is
+// shown transposed (14 wide, 20 tall) so it fills the screen; steering follows
+// what is on screen either way.
 // Positions are in cell units (1.0 = one board cell), so the physics does not
 // care how big the screen or the cells are.
 // While the maze is being played the face is locked (see FACE_SETTLE_LOCKED).
@@ -21,6 +25,10 @@ enum MazeState : uint8_t {
 class MazeGame {
 public:
     MazeGame();
+
+    // The upright face (0..3) whose screen rotation the maze is drawn in.
+    // Call before begin() when entering the maze.
+    void setViewFace(int face);
 
     // Entering the maze face: (re)load the current board with the ball on S.
     void begin();
@@ -50,6 +58,8 @@ public:
 
 private:
     int  _board;
+    int  _viewFace;                // FaceMap face whose rotation draws the maze
+    bool _transposed;              // portrait view: board column c is screen row c
     char _cells[MAZE_ROWS][MAZE_COLS];
     float _startX, _startY;
     float _bx, _by;                // ball centre, cell units
@@ -91,6 +101,8 @@ private:
     bool _needFull;                // board changed: repaint everything
 
     char cellAt(int c, int r) const;
+    int  screenCols() const { return _transposed ? MAZE_ROWS : MAZE_COLS; }
+    int  screenRows() const { return _transposed ? MAZE_COLS : MAZE_ROWS; }
     void layout(TFT_eSPI& tft);
     void drawCell(TFT_eSPI& tft, int c, int r);
     void drawBall(TFT_eSPI& tft, int px, int py, int r);

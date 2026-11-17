@@ -93,6 +93,7 @@ static bool clockAnalogView = false;
 static int mascotSceneIndex = 0;
 static int mascotPreviewScene = -1;      // dashboard preview, mirrors main.cpp
 static uint32_t mascotPreviewAt = 0;
+static uint32_t mascotPreviewMs = KUBI_SCENE_PREVIEW_MS;
 static int birthdayMMDD = 0;
 
 static int wrapMascotScene(int index) {
@@ -100,8 +101,8 @@ static int wrapMascotScene(int index) {
     return n == 0 ? 0 : ((index % n) + n) % n;
 }
 
-// --- FACE 4 --- (mirrors main.cpp)
-bool face4Maze = false;
+// --- MAZE (screen up) --- (mirrors main.cpp)
+int mazeViewFace = 0;
 
 // Helper: Convert 16-bit RGB565 to 32-bit RGBA (for web canvas)
 static void convertRGB565toRGBA32(const uint16_t* src, uint8_t* dst, int count) {
@@ -193,23 +194,32 @@ void hardwareSimulationThread() {
         int activeFace = sensors.getActiveFace();
         if (activeFace != previousFace) {
             previousFace = activeFace;
-            if (activeFace >= 0 && activeFace <= 3) {
+            if (activeFace >= 0 && activeFace < FACE_COUNT) {
                 currentMode = (KubiMode)activeFace;
-                display.setRotationForFace(activeFace);
                 std::cout << "[KUBI ORIENTATION] >>> Face " << (activeFace + 1)
                           << " UP: Screen rotated upright <<<" << std::endl;
-
+            } else if (activeFace == FACE_SCREEN_UP) {
+                currentMode = MODE_MAZE;
+                std::cout << "[KUBI ORIENTATION] >>> Screen UP: Maze, drawn as Face "
+                          << (mazeViewFace + 1) << " <<<" << std::endl;
+            }
+            if (activeFace >= 0) {
                 sim_injected_gesture = GESTURE_NONE;
                 sensors.getRecentGesture();
                 display.noteActivity();
             }
         }
+        // Mirrors main.cpp: the maze faces whoever tipped the cube back
+        if (currentMode != MODE_MAZE) mazeViewFace = (int)currentMode;
 
         // Mirrors main.cpp: rotation follows currentMode, applied on this thread only
-        display.setRotationForFace((int)currentMode);
+        display.setRotationForFace(rotationFaceFor(currentMode));
 
         bool mazeActive = mazeFaceActive(currentMode);
-        if (mazeActive && !mazeWasActive) maze.begin();
+        if (mazeActive && !mazeWasActive) {
+            maze.setViewFace(mazeViewFace);
+            maze.begin();
+        }
         mazeWasActive = mazeActive;
         // Face lock while playing (mirrors main.cpp)
         bool mazeLocked = mazeActive && maze.isPlaying(now);
@@ -255,7 +265,7 @@ void hardwareSimulationThread() {
                             audio.playChime(CHIME_TAP_FEEDBACK);
                             sim_last_chime_name = "CHIME_TAP_FEEDBACK";
                             sim_last_chime_time = now;
-                        } else if (currentMode == MODE_AMBIENT && !face4Maze) {
+                        } else if (currentMode == MODE_AMBIENT) {
                             ambient.nextColour(); // silent, mirrors main.cpp
                         } else if (currentMode == MODE_MASCOT_ROUTINE && ALL_KUBI_SCENE_COUNT > 0) {
                             display.pokeScene(); // Kubi notices; the scene stays his pick
@@ -312,8 +322,9 @@ void hardwareSimulationThread() {
             addressScreenUntil = 0;
         }
         bool bannerUp = isScreenOverrideActive || addressScreenUntil;
-        display.setSleepAllowed(modeMaySleep(currentMode) && !bannerUp);
-        display.setAwakeBrightness(currentMode == MODE_AMBIENT && !face4Maze && !bannerUp ? AmbientFace::BACKLIGHT : 255);
+        // A held scene (dashboard or Creator preview) keeps the screen awake
+        display.setSleepAllowed(modeMaySleep(currentMode) && !bannerUp && mascotPreviewScene < 0);
+        display.setAwakeBrightness(currentMode == MODE_AMBIENT && !bannerUp ? AmbientFace::BACKLIGHT : 255);
 
         // 6. Display Rendering: same ticks as hardware (was 40 ms here, 50 there)
         uint32_t renderTick = mazeActive ? RENDER_TICK_MAZE_MS : RENDER_TICK_MS;
@@ -338,7 +349,7 @@ void hardwareSimulationThread() {
                 }
 
                 // Kubi's scene pick, kept current on every face (mirrors main.cpp)
-                if (mascotPreviewScene >= 0 && now - mascotPreviewAt < KUBI_SCENE_PREVIEW_MS) {
+                if (mascotPreviewScene >= 0 && now - mascotPreviewAt < mascotPreviewMs) {
                     mascotSceneIndex = mascotPreviewScene;
                 } else {
                     mascotPreviewScene = -1;
@@ -371,8 +382,11 @@ void hardwareSimulationThread() {
                         break;
 
                     case MODE_AMBIENT:
-                        if (face4Maze) display.drawMazeFace();
-                        else display.drawAmbientFace();
+                        display.drawAmbientFace();
+                        break;
+
+                    case MODE_MAZE:
+                        display.drawMazeFace();
                         break;
 
                     default:
@@ -442,7 +456,6 @@ int main() {
     prefs.begin("kubi_settings", false);
     clockAnalogView = prefs.getBool("clockAnalog", false);
     birthdayMMDD = prefs.getInt("bday", 0);
-    face4Maze = prefs.getBool("face4Maze", false);
     display.setSleepTimeoutMinutes(prefs.getInt("sleepMin", 5));
     audio.setVolume(prefs.getInt("volume", 25) / 100.0f);
     prefs.end();
@@ -504,9 +517,12 @@ int main() {
         doc["clockAnalog"] = clockAnalogView;
         doc["sleepTimeoutMin"] = display.getSleepTimeoutMinutes();
         doc["isSleeping"] = display.isSleeping();
-        doc["face4Maze"] = face4Maze;
         doc["mascotScene"] = mascotSceneIndex;
         doc["mascotPreview"] = mascotPreviewScene >= 0;
+        if (mascotPreviewScene >= 0) {
+            uint32_t gone = millis() - mascotPreviewAt;
+            doc["mascotPreviewLeftMin"] = gone < mascotPreviewMs ? (int)((mascotPreviewMs - gone + 59999UL) / 60000UL) : 0;
+        }
         if (birthdayMMDD > 0) {
             char bday[8];
             snprintf(bday, sizeof(bday), "%02d-%02d", birthdayMMDD / 100, birthdayMMDD % 100);
@@ -587,6 +603,10 @@ int main() {
             if (want < 0) {
                 mascotPreviewScene = -1;
             } else {
+                // Mirrors API.cpp: the Creator panel can hold a scene longer
+                int minutes = jsonObj["mascotPreviewMin"] | 0;
+                if (minutes > MASCOT_PREVIEW_MAX_MIN) minutes = MASCOT_PREVIEW_MAX_MIN;
+                mascotPreviewMs = minutes > 0 ? (uint32_t)minutes * 60000UL : KUBI_SCENE_PREVIEW_MS;
                 mascotPreviewAt = millis();
                 mascotPreviewScene = wrapMascotScene(want);
                 mascotSceneIndex = mascotPreviewScene;
@@ -601,14 +621,6 @@ int main() {
             Preferences prefs;
             prefs.begin("kubi_settings", false);
             prefs.putInt("bday", birthdayMMDD);
-            prefs.end();
-        }
-
-        if (jsonObj["face4Maze"].is<bool>()) {
-            face4Maze = jsonObj["face4Maze"].as<bool>();
-            Preferences prefs;
-            prefs.begin("kubi_settings", false);
-            prefs.putBool("face4Maze", face4Maze);
             prefs.end();
         }
 
@@ -676,8 +688,17 @@ int main() {
         deserializeJson(json, req.body);
         JsonObject jsonObj = json.as<JsonObject>();
 
+        // Mirrors API.cpp: optional title, empty message takes the banner down
         if (jsonObj["message"].is<const char*>()) {
-            setOverrideText(jsonObj["message"].as<const char*>());
+            const char* message = jsonObj["message"].as<const char*>();
+            if (!*message) {
+                isScreenOverrideActive = false;
+                res.set_content("{\"status\":\"alert_cleared\"}", "application/json");
+                return;
+            }
+            char text[OVERRIDE_TEXT_MAX];
+            composeBanner(text, sizeof(text), jsonObj["title"] | "", message);
+            setOverrideText(text);
             isScreenOverrideActive = true;
             display.requestWake();
             std::cout << "[OVERRIDE] Alert received: " << getOverrideText().c_str() << std::endl;
@@ -686,6 +707,21 @@ int main() {
             res.status = 400;
             res.set_content("{\"error\":\"missing message\"}", "application/json");
         }
+    });
+
+    // Mirrors API.cpp 4b: POST /api/chime {"chime": name}
+    svr.Post("/api/chime", [](const httplib::Request& req, httplib::Response& res) {
+        addCors(res);
+        JsonDocument json;
+        deserializeJson(json, req.body);
+        KubiChime chime = chimeByName(json["chime"] | "");
+        if (chime == CHIME_NONE) {
+            res.status = 400;
+            res.set_content("{\"error\":\"unknown chime\"}", "application/json");
+            return;
+        }
+        audio.playChime(chime);
+        res.set_content("{\"status\":\"playing\"}", "application/json");
     });
 
     // -------------------------------------------------------------------------
@@ -770,13 +806,16 @@ int main() {
         // Quick Face Orientation Selection
         if (obj["face"].is<int>()) {
             int face = obj["face"].as<int>();
-            if (face >= 0 && face < FACE_COUNT) {
+            // 0..3 upright faces, 4 (FACE_SCREEN_UP) on its back: the maze,
+            // drawn the way the last upright face was
+            if (face >= 0 && face <= FACE_SCREEN_UP) {
                 // Same table the firmware classifies with (FaceMap.h)
                 gravityForFace(face, sim_accel_x, sim_accel_y, sim_accel_z);
                 sim_tilt_roll = 0.0f;
                 sim_tilt_pitch = 0.0f;
 
-                currentMode = (KubiMode)face; // rotation applied by the hardware thread
+                // rotation applied by the hardware thread
+                currentMode = face == FACE_SCREEN_UP ? MODE_MAZE : (KubiMode)face;
                 sim_injected_gesture = GESTURE_NONE;
                 sensors.getRecentGesture();
             }
@@ -793,7 +832,10 @@ int main() {
             if (sim_tilt_roll < -35.0f) sim_tilt_roll = -35.0f;
             if (sim_tilt_pitch > 35.0f) sim_tilt_pitch = 35.0f;
             if (sim_tilt_pitch < -35.0f) sim_tilt_pitch = -35.0f;
-            KVec3 g = tiltedGravity((int)currentMode, sim_tilt_roll, sim_tilt_pitch);
+            // On its back (the maze) pitch + means the top edge goes down
+            KVec3 g = currentMode == MODE_MAZE
+                ? tiltedGravityFlat(mazeViewFace, sim_tilt_roll, sim_tilt_pitch)
+                : tiltedGravity((int)currentMode, sim_tilt_roll, sim_tilt_pitch);
             sim_accel_x = g.x;
             sim_accel_y = g.y;
             sim_accel_z = g.z;
@@ -858,7 +900,7 @@ int main() {
         doc["isAnalog"] = clockAnalogView;
         doc["mascotScene"] = mascotSceneIndex;
         doc["pixelWrites"] = sim_pixel_writes;
-        if (face4Maze) {
+        if (currentMode == MODE_MAZE) {
             JsonObject m = doc["maze"].to<JsonObject>();
             m["board"] = maze.boardIndex();
             m["state"] = (int)maze.state();   // 0 ready, 1 running, 2 falling, 3 won

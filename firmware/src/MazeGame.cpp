@@ -34,7 +34,6 @@ static const float MAX_SPEED    = 9.0f;   // cells/s; 0.045 cells per step << ra
 static const float RESTITUTION  = 0.35f;  // wall bounce
 static const float FILTER_ALPHA = 0.35f;  // accelerometer low-pass per sample
 static const uint32_t CALIBRATE_MS = 250;
-static const int MAZE_FACE = 3;          // Face 4 slot (MODE_AMBIENT); frame from FaceMap.h
 
 // --- Game rules ---
 static const float    HOLE_CAPTURE = 0.30f;  // centre this close to a hole centre -> falls in
@@ -44,7 +43,7 @@ static const uint32_t WON_MS       = 3000;   // time/best banner before the next
 static const uint32_t MAX_TIME_MS  = 999900; // HUD shows at most 999.9 s
 
 MazeGame::MazeGame()
-    : _board(0), _startX(1.5f), _startY(1.5f), _bx(1.5f), _by(1.5f),
+    : _board(0), _viewFace(3), _transposed(false), _startX(1.5f), _startY(1.5f), _bx(1.5f), _by(1.5f),
       _vx(0), _vy(0), _fx(0), _fy(0), _fz(0), _restX(0), _restY(0), _restZ(0),
       _haveFilter(false), _calibrating(true), _calStart(0),
       _calSumX(0), _calSumY(0), _calSumZ(0), _calN(0), _lastUpdateMs(0), _stepAccum(0), _lastInputMs(0),
@@ -52,6 +51,14 @@ MazeGame::MazeGame()
       _cell(16), _ox(0), _oy(HUD_H), _drawnBallX(-1), _drawnBallY(-1), _drawnBallR(0),
       _drawnTenths(-1), _drawnState(MAZE_READY), _needFull(true) {
     memset(_cells, '#', sizeof(_cells));
+}
+
+void MazeGame::setViewFace(int face) {
+    if (face < 0 || face >= FACE_COUNT) face = 0;
+    bool transposed = (FACE_POSES[face].rotation % 2) == 0;  // portrait rotations 0 and 2
+    if (face != _viewFace || transposed != _transposed) _needFull = true;
+    _viewFace = face;
+    _transposed = transposed;
 }
 
 void MazeGame::begin() {
@@ -165,13 +172,17 @@ void MazeGame::update(float ax, float ay, float az, uint32_t nowMs) {
         return;
     }
 
-    // Tilt relative to rest, projected onto the maze face's screen axes
-    // (FaceMap.h, shared with the sim's tilt injection).
+    // Tilt relative to rest, projected onto the screen axes of the view face
+    // (FaceMap.h, shared with the sim's tilt injection). The cube lies on its
+    // back, so the screen's top and right edges are what tip.
     KVec3 up, right, out;
-    screenFrame(MAZE_FACE, up, right, out);
+    screenFrame(_viewFace, up, right, out);
     KVec3 d = { _fx - _restX, _fy - _restY, _fz - _restZ };
-    float tiltX = -kDot(d, right);  // right side down -> ball rolls right
-    float tiltY = -kDot(d, out);    // top edge away   -> ball rolls up (screen y is down)
+    float sx = -kDot(d, right);  // right edge down -> ball rolls right
+    float sy =  kDot(d, up);     // top edge down   -> ball rolls up (screen y is down)
+    // Screen axes to board axes: transposed, screen x is the board's row
+    float tiltX = _transposed ? sy : sx;
+    float tiltY = _transposed ? sx : sy;
 
     float mag = sqrtf(tiltX * tiltX + tiltY * tiltY);
     if (mag < DEADZONE) {
@@ -298,17 +309,18 @@ char MazeGame::cellAt(int c, int r) const {
 void MazeGame::layout(TFT_eSPI& tft) {
     int w = tft.width();
     int h = tft.height();
-    int cw = w / MAZE_COLS;
-    int ch = (h - HUD_H) / MAZE_ROWS;
+    int cw = w / screenCols();
+    int ch = (h - HUD_H) / screenRows();
     _cell = cw < ch ? cw : ch;
-    _ox = (w - _cell * MAZE_COLS) / 2;
-    _oy = HUD_H + (h - HUD_H - _cell * MAZE_ROWS) / 2;
+    _ox = (w - _cell * screenCols()) / 2;
+    _oy = HUD_H + (h - HUD_H - _cell * screenRows()) / 2;
 }
 
+// Board cell (c, r); transposed views draw it at screen cell (r, c)
 void MazeGame::drawCell(TFT_eSPI& tft, int c, int r) {
     if (c < 0 || r < 0 || c >= MAZE_COLS || r >= MAZE_ROWS) return;
-    int x = _ox + c * _cell;
-    int y = _oy + r * _cell;
+    int x = _ox + (_transposed ? r : c) * _cell;
+    int y = _oy + (_transposed ? c : r) * _cell;
     int s = _cell;
     switch (cellAt(c, r)) {
         case '#':
@@ -347,19 +359,25 @@ void MazeGame::drawBall(TFT_eSPI& tft, int px, int py, int r) {
 // Repaint the board cells under a ball drawn at (px, py) with radius r
 void MazeGame::restoreUnder(TFT_eSPI& tft, int px, int py, int r) {
     r += 1;
+    // Screen cells under the ball, then back to board cells
     int c0 = (px - r - _ox) / _cell, c1 = (px + r - _ox) / _cell;
     int r0 = (py - r - _oy) / _cell, r1 = (py + r - _oy) / _cell;
     for (int rr = r0; rr <= r1; rr++)
-        for (int cc = c0; cc <= c1; cc++)
-            drawCell(tft, cc, rr);
+        for (int cc = c0; cc <= c1; cc++) {
+            if (_transposed) drawCell(tft, rr, cc);
+            else drawCell(tft, cc, rr);
+        }
 }
 
 void MazeGame::drawHud(TFT_eSPI& tft, bool full, uint32_t nowMs) {
     int w = tft.width();
     tft.setTextPadding(0);
+    // Portrait is 240 px wide: no room for the board name, or for the best
+    // time next to "tilt to start"
     if (full) {
         char buf[40];
-        snprintf(buf, sizeof(buf), "%d/%d  %s", _board + 1, MAZE_BOARD_COUNT, MAZE_BOARDS[_board].name);
+        if (_transposed) snprintf(buf, sizeof(buf), "%d/%d", _board + 1, MAZE_BOARD_COUNT);
+        else snprintf(buf, sizeof(buf), "%d/%d  %s", _board + 1, MAZE_BOARD_COUNT, MAZE_BOARDS[_board].name);
         tft.setTextDatum(ML_DATUM);
         tft.setTextColor(COL_HUD, TFT_BLACK);
         tft.drawString(buf, _ox + 2, HUD_H / 2, 1);
@@ -375,7 +393,8 @@ void MazeGame::drawHud(TFT_eSPI& tft, bool full, uint32_t nowMs) {
     char best[16];
     if (_best) snprintf(best, sizeof(best), "best %lu.%lus", (unsigned long)(_best / 1000), (unsigned long)((_best / 100) % 10));
     else snprintf(best, sizeof(best), "best --");
-    if (_state == MAZE_READY) snprintf(right, sizeof(right), "tilt to start   %s", best);
+    if (_state == MAZE_READY && _transposed) snprintf(right, sizeof(right), "tilt to start");
+    else if (_state == MAZE_READY) snprintf(right, sizeof(right), "tilt to start   %s", best);
     else snprintf(right, sizeof(right), "%d.%ds   %s", tenths / 10, tenths % 10, best);
 
     tft.setTextDatum(MR_DATUM);
@@ -387,7 +406,7 @@ void MazeGame::drawHud(TFT_eSPI& tft, bool full, uint32_t nowMs) {
 
 void MazeGame::drawWinBanner(TFT_eSPI& tft) {
     int cx = tft.width() / 2;
-    int cy = _oy + (_cell * MAZE_ROWS) / 2;
+    int cy = _oy + (_cell * screenRows()) / 2;
     tft.fillRoundRect(cx - 90, cy - 36, 180, 72, 10, TFT_BLACK);
     tft.drawRoundRect(cx - 90, cy - 36, 180, 72, 10, COL_GOAL_A);
     char buf[24];
@@ -416,8 +435,10 @@ void MazeGame::draw(TFT_eSPI& tft, bool full, uint32_t nowMs) {
 
     // Only the ball moves: restore what it covered, then draw it again.
     // (It sits still while the win banner is up, so the banner stays intact.)
-    int px = _ox + (int)(_bx * _cell + 0.5f);
-    int py = _oy + (int)(_by * _cell + 0.5f);
+    float sx = _transposed ? _by : _bx;  // ball in screen cells
+    float sy = _transposed ? _bx : _by;
+    int px = _ox + (int)(sx * _cell + 0.5f);
+    int py = _oy + (int)(sy * _cell + 0.5f);
     int r = (int)(BALL_RADIUS * _cell * (_ballScale > 0 ? _ballScale : 0) + 0.5f);
     if (px != _drawnBallX || py != _drawnBallY || r != _drawnBallR) {
         if (_drawnBallX >= 0) restoreUnder(tft, _drawnBallX, _drawnBallY, _drawnBallR);

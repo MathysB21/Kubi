@@ -8,6 +8,7 @@
 #include "DisplayManager.h"
 #include "AudioManager.h"
 #include "KubiScenes.h"
+#include "SceneSchedule.h"
 
 // --- SHARED GLOBALS (Defined in main.cpp) ---
 extern volatile KubiMode currentMode;
@@ -29,6 +30,7 @@ extern bool clockAnalogView;
 extern int mascotSceneIndex;
 extern volatile int mascotPreviewScene;
 extern volatile uint32_t mascotPreviewAt;
+extern volatile uint32_t mascotPreviewMs;
 extern volatile int birthdayMMDD;
 extern volatile bool napRequested;
 
@@ -59,6 +61,10 @@ void setupAPIRoutes(AsyncWebServer& server) {
         doc["chargeAlertLow"] = chargeAlertLow;
         doc["mascotScene"] = mascotSceneIndex;
         doc["mascotPreview"] = mascotPreviewScene >= 0; // false: Kubi's own pick
+        if (mascotPreviewScene >= 0) {
+            uint32_t gone = millis() - mascotPreviewAt;
+            doc["mascotPreviewLeftMin"] = gone < mascotPreviewMs ? (int)((mascotPreviewMs - gone + 59999UL) / 60000UL) : 0;
+        }
         if (birthdayMMDD > 0) {
             char bday[8];
             snprintf(bday, sizeof(bday), "%02d-%02d", birthdayMMDD / 100, birthdayMMDD % 100);
@@ -90,7 +96,6 @@ void setupAPIRoutes(AsyncWebServer& server) {
         doc["sleepTimeoutMin"] = display.getSleepTimeoutMinutes();
         doc["isSleeping"] = display.isSleeping();
         doc["volume"] = (int)lroundf(audio.getVolume() * 100.0f);
-        doc["face4Maze"] = face4Maze;
 
         serializeJson(doc, *response);
         request->send(response);
@@ -154,15 +159,20 @@ void setupAPIRoutes(AsyncWebServer& server) {
             prefs.end();
         }
 
-        // Mascot diorama scene: a preview for KUBI_SCENE_PREVIEW_MS, then Kubi
-        // picks his own again (-1 hands back at once). Like face4Maze, the
-        // hardware loop applies it; nothing here touches the display.
+        // Mascot diorama scene: a preview for KUBI_SCENE_PREVIEW_MS (or
+        // "mascotPreviewMin" from the Creator panel), then Kubi picks his own
+        // again (-1 hands back at once). The hardware loop applies it; nothing
+        // here touches the display. Any scene works, Birthday and Christmas
+        // included; the saved birthday date is never touched.
         if (jsonObj["mascotScene"].is<int>() && ALL_KUBI_SCENE_COUNT > 0) {
             int n = (int)ALL_KUBI_SCENE_COUNT;
             int want = jsonObj["mascotScene"].as<int>();
             if (want < 0) {
                 mascotPreviewScene = -1;
             } else {
+                int minutes = jsonObj["mascotPreviewMin"] | 0;
+                if (minutes > MASCOT_PREVIEW_MAX_MIN) minutes = MASCOT_PREVIEW_MAX_MIN;
+                mascotPreviewMs = minutes > 0 ? (uint32_t)minutes * 60000UL : KUBI_SCENE_PREVIEW_MS;
                 mascotPreviewAt = millis();
                 mascotPreviewScene = want % n;
                 mascotSceneIndex = want % n;
@@ -191,16 +201,6 @@ void setupAPIRoutes(AsyncWebServer& server) {
             Preferences prefs;
             prefs.begin("kubi_settings", false);
             prefs.putInt("bday", value);
-            prefs.end();
-        }
-
-        // Face 4: Ambient (false) or Maze (true). The hardware loop notices the
-        // change and switches scenes; nothing here touches the display.
-        if (jsonObj["face4Maze"].is<bool>()) {
-            face4Maze = jsonObj["face4Maze"].as<bool>();
-            Preferences prefs;
-            prefs.begin("kubi_settings", false);
-            prefs.putBool("face4Maze", face4Maze);
             prefs.end();
         }
 
@@ -263,7 +263,15 @@ void setupAPIRoutes(AsyncWebServer& server) {
         JsonObject jsonObj = json.as<JsonObject>();
 
         if (jsonObj["message"].is<const char*>()) {
-            setOverrideText(jsonObj["message"].as<const char*>());
+            const char* message = jsonObj["message"].as<const char*>();
+            if (!*message) {
+                isScreenOverrideActive = false; // empty message: take the banner down
+                request->send(200, "application/json", "{\"status\":\"alert_cleared\"}");
+                return;
+            }
+            char text[OVERRIDE_TEXT_MAX];
+            composeBanner(text, sizeof(text), jsonObj["title"] | "", message);
+            setOverrideText(text);
             isScreenOverrideActive = true; // Set after the text so the reader never sees a stale banner
             display.requestWake();
             Serial.printf("[OVERRIDE] Custom alert received: %s\n", getOverrideText().c_str());
@@ -273,6 +281,21 @@ void setupAPIRoutes(AsyncWebServer& server) {
         }
     });
     server.addHandler(overrideHandler);
+
+    // =========================================================================
+    // 4b. POST /api/chime {"chime": "tap"|"done"|"fanfare"|"ping"|"ouch"}
+    // Creator panel: play any chime. playChime() is safe from any task.
+    // =========================================================================
+    AsyncCallbackJsonWebHandler* chimeHandler = new AsyncCallbackJsonWebHandler("/api/chime", [](AsyncWebServerRequest *request, JsonVariant &json) {
+        KubiChime chime = chimeByName(json["chime"] | "");
+        if (chime == CHIME_NONE) {
+            request->send(400, "application/json", "{\"error\":\"unknown chime\"}");
+            return;
+        }
+        audio.playChime(chime);
+        request->send(200, "application/json", "{\"status\":\"playing\"}");
+    });
+    server.addHandler(chimeHandler);
 
     // =========================================================================
     // 5. GET /api/diagnostics

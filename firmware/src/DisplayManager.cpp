@@ -883,17 +883,52 @@ void DisplayManager::drawOverrideAlert(const String& message) {
     int cx = w / 2;
     int cy = _tft.height() / 2;
 
-    // High-priority alert banner
-    _tft.fillRoundRect(10, cy - 70, w - 20, 140, 12, TFT_MAROON);
-    _tft.drawRoundRect(10, cy - 70, w - 20, 140, 12, TFT_RED);
+    // "title\nbody" (composeBanner in API.h); no title = the classic alert
+    String title = "! INCOMING ALERT !";
+    String body = message;
+    int nl = message.indexOf('\n');
+    if (nl >= 0) {
+        title = message.substring(0, nl);
+        body = message.substring(nl + 1);
+    }
+
+    // Word-wrap the body to at most 3 lines of font 2 inside the banner
+    const int MAX_LINES = 3;
+    String lines[MAX_LINES];
+    int count = 0;
+    int maxW = w - 40;
+    String line;
+    unsigned int i = 0;
+    while (i <= body.length() && count < MAX_LINES) {
+        int sp = body.indexOf(' ', i);
+        unsigned int end = sp < 0 ? body.length() : (unsigned int)sp;
+        String word = body.substring(i, end);
+        String trial = line.length() ? line + " " + word : word;
+        if (line.length() && _tft.textWidth(trial, 2) > maxW) {
+            lines[count++] = line;  // word goes on the next line
+            line = word;
+        } else {
+            line = trial;
+        }
+        i = end + 1;
+    }
+    if (count < MAX_LINES && line.length()) lines[count++] = line;
+
+    const int LINE_H = 18;
+    int boxH = 76 + count * LINE_H;
+    int top = cy - boxH / 2;
+    _tft.fillRoundRect(10, top, w - 20, boxH, 12, TFT_MAROON);
+    _tft.drawRoundRect(10, top, w - 20, boxH, 12, TFT_RED);
 
     _tft.setTextDatum(MC_DATUM);
     _tft.setTextColor(TFT_YELLOW, TFT_MAROON);
-    _tft.drawString("! INCOMING ALERT !", cx, cy - 40, 2);
+    _tft.drawString(title, cx, top + 22, 2);
 
     _tft.setTextColor(TFT_WHITE, TFT_MAROON);
-    _tft.drawString(message, cx, cy, 2);
+    for (int l = 0; l < count; l++) {
+        _tft.drawString(lines[l], cx, top + 48 + l * LINE_H, 2);
+    }
 
     _tft.setTextColor(TFT_LIGHTGREY, TFT_MAROON);
-    _tft.drawString("Tap to dismiss", cx, cy + 40, 1);
+    _tft.drawString("Tap to dismiss", cx, top + boxH - 16, 1);
 }

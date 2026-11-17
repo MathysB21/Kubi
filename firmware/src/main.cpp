@@ -17,6 +17,7 @@
 #include "PomodoroManager.h"
 #include "AmbientFace.h"
 #include "MazeGame.h"
+#include "FaceMap.h"
 #include "KubiScenes.h"
 #include "Battery.h"
 #include "SceneSchedule.h"
@@ -78,6 +79,7 @@ int mascotSceneIndex = 0; // Diorama on the Mascot face, 0..ALL_KUBI_SCENE_COUNT
 // for KUBI_SCENE_PREVIEW_MS: API.cpp sets these, the hardware loop applies them.
 volatile int      mascotPreviewScene = -1;
 volatile uint32_t mascotPreviewAt    = 0;
+volatile uint32_t mascotPreviewMs    = KUBI_SCENE_PREVIEW_MS; // Creator panel can hold longer
 volatile int      birthdayMMDD       = 0;  // NVS "bday", 0 = not set
 
 // Tap or shake on Face 3: Kubi notices (blinks); the scene stays his choice
@@ -86,8 +88,8 @@ static void pokeMascot() {
   audio.playChime(CHIME_TAP_FEEDBACK);
 }
 
-// --- FACE 4 ---
-bool face4Maze = false; // false = Ambient (shipping default)
+// --- MAZE (screen up) ---
+int mazeViewFace = 0; // last upright face: the maze draws the way it did
 
 // --- NETWORK & TIME CONFIG ---
 const char* ntpServer          = "pool.ntp.org";
@@ -466,7 +468,9 @@ static float readBatteryVolts() {
 }
 
 static void batteryReminder(const char* text) {
-  setOverrideText(text);
+  char banner[OVERRIDE_TEXT_MAX];
+  composeBanner(banner, sizeof(banner), "Kubi's battery", text); // calm title, not the alert one
+  setOverrideText(banner);
   isScreenOverrideActive = true; // tap dismisses it, like any banner
   display.requestWake();
   audio.playChime(CHIME_WAKE_PING);
@@ -590,28 +594,37 @@ void core1HardwareTask(void * parameter) {
     int activeFace = sensors.getActiveFace();
     if (activeFace != previousFace) {
       previousFace = activeFace;
-      if (activeFace >= 0 && activeFace <= 3) {
+      if (activeFace >= 0 && activeFace < FACE_COUNT) {
         currentMode = (KubiMode)activeFace;
-        display.setRotationForFace(activeFace);
         Serial.printf("[KUBI ORIENTATION] >>> Face %d UP: Switched to %s (Screen rotated upright) <<<\n",
           activeFace + 1,
           activeFace == 0 ? "Face 1 (Clock Idle)" :
           activeFace == 1 ? "Face 2 (Pomodoro Timer)" :
           activeFace == 2 ? "Face 3 (Mascot & Temp)" : "Face 4 (Ambient)"
         );
-
+      } else if (activeFace == FACE_SCREEN_UP) {
+        currentMode = MODE_MAZE;
+        Serial.printf("[KUBI ORIENTATION] >>> Screen UP: Maze, drawn as Face %d <<<\n", mazeViewFace + 1);
+      }
+      if (activeFace >= 0) {
         sensors.getRecentGesture(); // Flush any transient gesture during orientation transition
         display.noteActivity();
       }
     }
+    // The maze faces whoever tipped the cube back: remember the last upright
+    // face (the dashboard can set one too).
+    if (currentMode != MODE_MAZE) mazeViewFace = (int)currentMode;
 
     // Keep rotation in sync with currentMode, which the dashboard can also
     // change. No-op unless it differs; TFT access stays on this core.
-    display.setRotationForFace((int)currentMode);
+    display.setRotationForFace(rotationFaceFor(currentMode));
 
     // Entering the maze face starts the current board afresh
     bool mazeActive = mazeFaceActive(currentMode);
-    if (mazeActive && !mazeWasActive) maze.begin();
+    if (mazeActive && !mazeWasActive) {
+      maze.setViewFace(mazeViewFace);
+      maze.begin();
+    }
     mazeWasActive = mazeActive;
     // Face lock while playing: leaving needs a 2 s hold on another face, and
     // the maze lets go by itself after MAZE_IDLE_UNLOCK_MS without input.
@@ -646,7 +659,7 @@ void core1HardwareTask(void * parameter) {
               pomodoro.handleTap();
             } else if (currentMode == MODE_CLOCK_IDLE) {
               audio.playChime(CHIME_TAP_FEEDBACK);
-            } else if (currentMode == MODE_AMBIENT && !face4Maze) {
+            } else if (currentMode == MODE_AMBIENT) {
               ambient.nextColour(); // silent: this face is for dark rooms
             } else if (currentMode == MODE_MASCOT_ROUTINE) {
               pokeMascot();
@@ -690,8 +703,9 @@ void core1HardwareTask(void * parameter) {
       addressScreenUntil = 0;
     }
     bool bannerUp = isScreenOverrideActive || addressScreenUntil;
-    display.setSleepAllowed(modeMaySleep(currentMode) && !bannerUp);
-    display.setAwakeBrightness(currentMode == MODE_AMBIENT && !face4Maze && !bannerUp ? AmbientFace::BACKLIGHT : 255);
+    // A held scene (dashboard or Creator preview) keeps the screen awake
+    display.setSleepAllowed(modeMaySleep(currentMode) && !bannerUp && mascotPreviewScene < 0);
+    display.setAwakeBrightness(currentMode == MODE_AMBIENT && !bannerUp ? AmbientFace::BACKLIGHT : 255);
 
     // 6. Display Rendering (~20Hz tick)
     uint32_t renderTick = mazeActive ? RENDER_TICK_MAZE_MS : RENDER_TICK_MS;
@@ -716,7 +730,7 @@ void core1HardwareTask(void * parameter) {
         }
 
         // Kubi's scene pick, kept current on every face so the dashboard can show it
-        if (mascotPreviewScene >= 0 && now - mascotPreviewAt < KUBI_SCENE_PREVIEW_MS) {
+        if (mascotPreviewScene >= 0 && now - mascotPreviewAt < mascotPreviewMs) {
           mascotSceneIndex = mascotPreviewScene;
         } else {
           mascotPreviewScene = -1;
@@ -749,8 +763,11 @@ void core1HardwareTask(void * parameter) {
             break;
 
           case MODE_AMBIENT:
-            if (face4Maze) display.drawMazeFace();
-            else display.drawAmbientFace();
+            display.drawAmbientFace();
+            break;
+
+          case MODE_MAZE:
+            display.drawMazeFace();
             break;
 
           default:
@@ -843,7 +860,6 @@ void setup() {
   chargeAlertHigh = preferences.getInt("alertHi", 0);
   chargeAlertLow = preferences.getInt("alertLo", 0);
   battery.setLearnedRates(preferences.getFloat("drainRate", 0.0f), preferences.getFloat("chargeRate", 0.0f));
-  face4Maze       = preferences.getBool("face4Maze", false);
   display.setSleepTimeoutMinutes(preferences.getInt("sleepMin", 5));
   audio.setVolume(preferences.getInt("volume", 25) / 100.0f); // dashboard "Sound"
   bool firstConnect = preferences.getBool("showAddr", false);
