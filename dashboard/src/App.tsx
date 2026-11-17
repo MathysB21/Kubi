@@ -47,6 +47,7 @@ import { Toaster, toast } from "sonner";
 import { useEffect, useState } from "react";
 import { SpinningCube } from "./components/SpinningCube";
 import { CreatorPanel } from "./components/CreatorPanel";
+import { useSliderDraft } from "./lib/useSliderDraft";
 import { Link } from "react-router";
 
 // Detailed Pomodoro state
@@ -212,25 +213,28 @@ function KubiDashboard() {
   const data = liveData ?? DEFAULT_STATE;
   const isStale = isError && liveData !== undefined;
 
-  // Volume slider: shows the dragged value until Kubi reports it back, and
-  // only sends on release so the confirmation chime plays once per change.
-  const [volumeDraft, setVolumeDraft] = useState<number | null>(null);
-  const volume = volumeDraft ?? data.volume ?? 25;
-  useEffect(() => {
-    if (volumeDraft !== null && data.volume === volumeDraft) setVolumeDraft(null);
-  }, [data.volume, volumeDraft]);
+  // Sliders: each shows the dragged value and sends one save when it goes
+  // still or is let go (useSliderDraft). Volume plays a chime per save.
+  const volumeSlider = useSliderDraft(data.volume ?? 25, (v) => mutation.mutate({ volume: v }));
+  const volume = volumeSlider.value;
+  const pomoNow = data.pomodoro || DEFAULT_STATE.pomodoro;
+  const focusSlider = useSliderDraft(pomoNow.focusMin, (v) => mutation.mutate({ focusMin: v }));
+  const shortSlider = useSliderDraft(pomoNow.shortBreakMin, (v) => mutation.mutate({ shortBreakMin: v }));
+  const longSlider = useSliderDraft(pomoNow.longBreakMin, (v) => mutation.mutate({ longBreakMin: v }));
+  const cyclesSlider = useSliderDraft(pomoNow.cycleTarget, (v) => mutation.mutate({ cycleTarget: v }));
 
-  // Charge reminder sliders: same draft-until-confirmed pattern as volume
-  const [alertHighDraft, setAlertHighDraft] = useState<number | null>(null);
-  const [alertLowDraft, setAlertLowDraft] = useState<number | null>(null);
-  const alertHigh = alertHighDraft ?? data.chargeAlertHigh ?? 0;
-  const alertLow = alertLowDraft ?? data.chargeAlertLow ?? 0;
-  useEffect(() => {
-    if (alertHighDraft !== null && data.chargeAlertHigh === alertHighDraft) setAlertHighDraft(null);
-  }, [data.chargeAlertHigh, alertHighDraft]);
-  useEffect(() => {
-    if (alertLowDraft !== null && data.chargeAlertLow === alertLowDraft) setAlertLowDraft(null);
-  }, [data.chargeAlertLow, alertLowDraft]);
+  // Charge reminders: 0 = off. An off reminder's slider rests at a suggested
+  // level and stays draggable: dragging it turns the reminder on.
+  const ALERT_DEFAULT_HIGH = 80;
+  const ALERT_DEFAULT_LOW = 20;
+  const alertHighSlider = useSliderDraft(
+    (data.chargeAlertHigh ?? 0) > 0 ? data.chargeAlertHigh! : ALERT_DEFAULT_HIGH,
+    (v) => mutation.mutate({ chargeAlertHigh: v })
+  );
+  const alertLowSlider = useSliderDraft(
+    (data.chargeAlertLow ?? 0) > 0 ? data.chargeAlertLow! : ALERT_DEFAULT_LOW,
+    (v) => mutation.mutate({ chargeAlertLow: v })
+  );
 
   // Creator panel (the brother's backdoor): five taps on the title within 3 s
   // open or hide it. Remembered in this browser only; storage can be blocked.
@@ -371,60 +375,60 @@ function KubiDashboard() {
             <div className="space-y-1.5">
               <div className="flex justify-between text-xs">
                 <span className="text-zinc-300 font-medium">Work / Focus Duration</span>
-                <span className="font-mono text-amber-500">{pomo.focusMin} mins</span>
+                <span className="font-mono text-amber-500">{focusSlider.value} mins</span>
               </div>
               <input
                 type="range"
                 min="1"
                 max="90"
-                value={pomo.focusMin}
-                onChange={(e) => mutation.mutate({ focusMin: Number(e.target.value) })}
-                className="w-full h-2 bg-zinc-950 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                {...focusSlider.input}
+                className="kubi-range"
+                style={{ "--range": "#f59e0b" } as React.CSSProperties}
               />
             </div>
 
             <div className="space-y-1.5">
               <div className="flex justify-between text-xs">
                 <span className="text-zinc-300 font-medium">Short Break Duration</span>
-                <span className="font-mono text-emerald-400">{pomo.shortBreakMin} mins</span>
+                <span className="font-mono text-emerald-400">{shortSlider.value} mins</span>
               </div>
               <input
                 type="range"
                 min="1"
                 max="30"
-                value={pomo.shortBreakMin}
-                onChange={(e) => mutation.mutate({ shortBreakMin: Number(e.target.value) })}
-                className="w-full h-2 bg-zinc-950 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                {...shortSlider.input}
+                className="kubi-range"
+                style={{ "--range": "#10b981" } as React.CSSProperties}
               />
             </div>
 
             <div className="space-y-1.5">
               <div className="flex justify-between text-xs">
                 <span className="text-zinc-300 font-medium">Long Break Duration</span>
-                <span className="font-mono text-sky-400">{pomo.longBreakMin} mins</span>
+                <span className="font-mono text-sky-400">{longSlider.value} mins</span>
               </div>
               <input
                 type="range"
                 min="5"
                 max="60"
-                value={pomo.longBreakMin}
-                onChange={(e) => mutation.mutate({ longBreakMin: Number(e.target.value) })}
-                className="w-full h-2 bg-zinc-950 rounded-lg appearance-none cursor-pointer accent-sky-500"
+                {...longSlider.input}
+                className="kubi-range"
+                style={{ "--range": "#0ea5e9" } as React.CSSProperties}
               />
             </div>
 
             <div className="space-y-1.5">
               <div className="flex justify-between text-xs">
                 <span className="text-zinc-300 font-medium">Sessions Before Long Break</span>
-                <span className="font-mono text-zinc-300">{pomo.cycleTarget} sessions</span>
+                <span className="font-mono text-zinc-300">{cyclesSlider.value} sessions</span>
               </div>
               <input
                 type="range"
                 min="2"
                 max="8"
-                value={pomo.cycleTarget}
-                onChange={(e) => mutation.mutate({ cycleTarget: Number(e.target.value) })}
-                className="w-full h-2 bg-zinc-950 rounded-lg appearance-none cursor-pointer accent-zinc-400"
+                {...cyclesSlider.input}
+                className="kubi-range"
+                style={{ "--range": "#a1a1aa" } as React.CSSProperties}
               />
             </div>
           </div>
@@ -568,26 +572,23 @@ function KubiDashboard() {
             itself always fills the battery; this only reminds you.
           </p>
           {[
-            { label: "Remind me to unplug at", value: alertHigh, min: 50, max: 100, set: setAlertHighDraft, key: "chargeAlertHigh" },
-            { label: "Remind me to plug in at", value: alertLow, min: 5, max: 50, set: setAlertLowDraft, key: "chargeAlertLow" },
+            { label: "Remind me to unplug at", slider: alertHighSlider, saved: data.chargeAlertHigh ?? 0, min: 50, max: 100, key: "chargeAlertHigh" },
+            { label: "Remind me to plug in at", slider: alertLowSlider, saved: data.chargeAlertLow ?? 0, min: 5, max: 50, key: "chargeAlertLow" },
           ].map((r) => {
-            const on = r.value > 0;
-            const shown = on ? r.value : r.key === "chargeAlertHigh" ? 80 : 20;
+            // Dragging an off reminder turns it on at the dragged level
+            const on = r.saved > 0 || r.slider.drafting;
             return (
-              <div key={r.key} className="space-y-1.5">
-                <div className="flex justify-between items-center text-xs">
+              <div key={r.key} className="space-y-1">
+                <div className="flex justify-between items-center gap-3 text-xs">
                   <span className="text-zinc-300 font-medium">{r.label}</span>
                   <button
-                    onClick={() => {
-                      const next = on ? 0 : shown;
-                      r.set(next);
-                      mutation.mutate({ [r.key]: next });
-                    }}
-                    className={`px-2 py-0.5 rounded-md font-mono cursor-pointer ${
+                    onClick={() => mutation.mutate({ [r.key]: on ? 0 : r.slider.value })}
+                    className={`shrink-0 px-2.5 py-1 rounded-md font-mono cursor-pointer ${
                       on ? "bg-amber-500/10 text-amber-500" : "bg-zinc-800 text-zinc-500"
                     }`}
+                    aria-label={on ? `${r.label}: turn off` : `${r.label}: turn on`}
                   >
-                    {on ? `${r.value}%` : "Off"}
+                    {on ? `${r.slider.value}%` : "Off"}
                   </button>
                 </div>
                 <input
@@ -595,13 +596,9 @@ function KubiDashboard() {
                   min={r.min}
                   max={r.max}
                   step={1}
-                  value={shown}
-                  disabled={!on}
                   aria-label={r.label}
-                  onChange={(e) => r.set(Number(e.target.value))}
-                  onPointerUp={() => on && mutation.mutate({ [r.key]: r.value })}
-                  onKeyUp={() => on && mutation.mutate({ [r.key]: r.value })}
-                  className="w-full accent-amber-500 cursor-pointer disabled:opacity-40"
+                  {...r.slider.input}
+                  className={`kubi-range ${on ? "" : "opacity-40"}`}
                 />
               </div>
             );
@@ -696,12 +693,9 @@ function KubiDashboard() {
               min={0}
               max={100}
               step={5}
-              value={volume}
               aria-label="Chime volume"
-              onChange={(e) => setVolumeDraft(Number(e.target.value))}
-              onPointerUp={() => volumeDraft !== null && mutation.mutate({ volume: volumeDraft })}
-              onKeyUp={() => volumeDraft !== null && mutation.mutate({ volume: volumeDraft })}
-              className="flex-1 accent-amber-500 cursor-pointer"
+              {...volumeSlider.input}
+              className="kubi-range flex-1"
             />
             <span className="font-mono text-xs text-zinc-300 w-10 text-right">
               {volume === 0 ? "Off" : `${volume}%`}
@@ -997,24 +991,50 @@ function KubiDashboard() {
           </section>
         ) : (
           // --- NON-POMODORO CONTEXTUAL CARD ---
-          <section className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 shadow-xl flex items-center justify-between">
-            <div className="flex items-center gap-3.5">
-              <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl text-amber-500">
-                <activeFace.icon size={22} />
-              </div>
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
-                  Current Face Orientation
-                </p>
-                <h2 className="text-base font-medium text-zinc-100">{activeFace.name}</h2>
-              </div>
+          // Icon in its own column; label, name, hint and the face's one action
+          // each get a full line, so nothing squeezes on a phone.
+          <section className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 shadow-xl flex items-start gap-4">
+            <div className="shrink-0 p-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl text-amber-500">
+              <activeFace.icon size={22} />
             </div>
-            <button
-              onClick={() => mutation.mutate({ mode: 1 })}
-              className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-amber-500 border border-amber-500/30 rounded-xl text-xs font-medium transition-colors cursor-pointer"
-            >
-              Start Pomodoro
-            </button>
+            <div className="min-w-0 flex-1 space-y-1">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+                Current face{" · "}
+                {activeFace.name.includes(":") ? activeFace.name.split(":")[0] : ""}
+              </p>
+              <h2 className="text-base font-medium text-zinc-100 leading-snug">
+                {activeFace.name.includes(":") ? activeFace.name.split(":")[1].trim() : activeFace.name}
+              </h2>
+              <p className="text-xs text-zinc-500 leading-relaxed">
+                {data.mode === 0
+                  ? "Shake Kubi to switch between the digital and analog clock."
+                  : data.mode === 2
+                  ? data.mascotPreview
+                    ? "Showing a scene you picked. Tap Kubi and he blinks."
+                    : "Kubi picks his scene from the time and day. Tap him and he blinks."
+                  : data.mode === 3
+                  ? "Tap Kubi for the next colour."
+                  : data.mode === MAZE_MODE.id
+                  ? "Tilt to roll the ball to the gold flag. Stand him up and hold 2 s to leave."
+                  : activeFace.desc}
+              </p>
+              {data.mode === 0 && (
+                <button
+                  onClick={() => mutation.mutate({ clockAnalog: !data.clockAnalog })}
+                  className="mt-2 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-amber-500 border border-amber-500/30 rounded-xl text-xs font-medium transition-colors cursor-pointer"
+                >
+                  {data.clockAnalog ? "Show digital clock" : "Show analog clock"}
+                </button>
+              )}
+              {data.mode === 2 && data.mascotPreview && (
+                <button
+                  onClick={() => mutation.mutate({ mascotScene: -1 })}
+                  className="mt-2 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 rounded-xl text-xs font-medium transition-colors cursor-pointer"
+                >
+                  Let Kubi choose
+                </button>
+              )}
+            </div>
           </section>
         )}
 
