@@ -35,8 +35,12 @@ public:
     void loadBoard(int index);
 
     // Feed the raw accelerometer (m/s^2) every loop iteration while the maze
-    // face is up. Steering is the tilt RELATIVE to the resting vector captured
-    // when the board starts, so the cube never has to sit perfectly level.
+    // face is up. Steering is real gravity: the reading's distance from the
+    // level reading (SCREEN_UP_LEVEL_* in FaceMap.h), so level holds the ball
+    // still. Nothing is captured at board start: the maze appears while the
+    // cube is still being tipped back, and a snapshot then made a level cube
+    // read as tilted. Instead a new board waits (ball on S, no physics) until
+    // the cube has been still for ARM_MS, i.e. put down.
     void update(float ax, float ay, float az, uint32_t nowMs);
 
     // full = the screen was just cleared. Otherwise only the ball (and HUD
@@ -65,14 +69,12 @@ private:
     float _bx, _by;                // ball centre, cell units
     float _vx, _vy;                // cells/s
 
-    // Input: low-passed accelerometer and the calibrated resting vector
+    // Input: low-passed accelerometer; arming waits for the cube to be put down
     float _fx, _fy, _fz;
-    float _restX, _restY, _restZ;
     bool  _haveFilter;
-    bool  _calibrating;
-    uint32_t _calStart;
-    float _calSumX, _calSumY, _calSumZ;
-    int   _calN;
+    bool  _armed;                  // false: a new board waits for stillness
+    float _armX, _armY, _armZ;     // reading the stillness is measured against
+    uint32_t _armSince;
     uint32_t _lastUpdateMs;
     float _stepAccum;
     uint32_t _lastInputMs;         // 0 = no input since the board started
@@ -86,7 +88,6 @@ private:
     bool     _newBest;
     float    _ballScale;           // 1 = normal, shrinks while falling
 
-    void startCalibration(uint32_t nowMs);
     void step(float dt, float tiltX, float tiltY);
     void collide();
     void checkCells(uint32_t nowMs);

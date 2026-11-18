@@ -77,6 +77,21 @@ inline int screenUpPose() { return SCREEN_OUT_AXIS * 2 + (SCREEN_OUT_SIGN > 0 ? 
 
 struct KVec3 { float x, y, z; };
 
+// ============================================================================
+// What the accelerometer reads with the cube lying truly level on its back
+// (m/s^2). The maze steers by how far the reading is from this, so a level
+// cube holds the ball still and it follows gravity exactly. Only the two
+// in-screen components matter; they are the sensor's zero-g offset plus any
+// tilt between the IMU and the back plate. Written for SCREEN_OUT_AXIS = Z
+// (X and Y are the in-screen axes). Measured in the wooden cube (2026-11-18,
+// 20-sample averages of /api/diagnostics): flat on the desk read
+// (-0.337, -0.567), turned 180 degrees on the spot (-0.382, -0.200); the
+// average cancels the desk's own slope (~1 degree). Remeasure the same way
+// if the IMU or the back plate ever moves.
+// ============================================================================
+static const float SCREEN_UP_LEVEL_X = -0.36f;
+static const float SCREEN_UP_LEVEL_Y = -0.38f;
+
 inline KVec3 kAxis(GravityAxis a, float s) {
     KVec3 v = { 0, 0, 0 };
     if (a == AXIS_X) v.x = s; else if (a == AXIS_Y) v.y = s; else v.z = s;
@@ -138,6 +153,9 @@ inline KVec3 tiltedGravityFlat(int viewFace, float rollDeg, float pitchDeg) {
                 out.z * cr * cp - right.z * sr - up.z * sp };
     float n = sqrtf(kDot(v, v));
     if (n > 0) { v.x *= 9.8f / n; v.y *= 9.8f / n; v.z *= 9.8f / n; }
+    // The real sensor's level reading, so a level sim cube steers like Kubi
+    v.x += SCREEN_UP_LEVEL_X;
+    v.y += SCREEN_UP_LEVEL_Y;
     return v;
 }
 
@@ -147,7 +165,7 @@ inline void gravityForFace(int face, float& x, float& y, float& z) {
     x = y = z = 0.0f;
     if (face == FACE_SCREEN_UP) {
         KVec3 o = kAxis(SCREEN_OUT_AXIS, SCREEN_OUT_SIGN);
-        x = 9.8f * o.x; y = 9.8f * o.y; z = 9.8f * o.z;
+        x = 9.8f * o.x + SCREEN_UP_LEVEL_X; y = 9.8f * o.y + SCREEN_UP_LEVEL_Y; z = 9.8f * o.z;
         return;
     }
     if (face < 0 || face >= FACE_COUNT) return;

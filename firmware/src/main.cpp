@@ -467,14 +467,28 @@ static float readBatteryVolts() {
   return (mv / 32.0f) / 1000.0f / BATTERY_DIVIDER_RATIO;
 }
 
+// Quiet hours for the charge reminders: the 20 % ping woke the house at 01:20
+// (2026-11-18). At night the banner still goes up, but without the chime and
+// without waking a sleeping screen. Local time; unknown time counts as day.
+#define REMINDER_QUIET_FROM_HOUR 22
+#define REMINDER_QUIET_TO_HOUR    7
+static bool reminderQuietHours() {
+  struct tm t;
+  if (!getLocalTime(&t, 0)) return false;
+  return t.tm_hour >= REMINDER_QUIET_FROM_HOUR || t.tm_hour < REMINDER_QUIET_TO_HOUR;
+}
+
 static void batteryReminder(const char* text) {
   char banner[OVERRIDE_TEXT_MAX];
   composeBanner(banner, sizeof(banner), "Kubi's battery", text); // calm title, not the alert one
   setOverrideText(banner);
   isScreenOverrideActive = true; // tap dismisses it, like any banner
-  display.requestWake();
-  audio.playChime(CHIME_WAKE_PING);
-  Serial.printf("[BATTERY] %s\n", text);
+  bool quiet = reminderQuietHours();
+  if (!quiet) {
+    display.requestWake();
+    audio.playChime(CHIME_WAKE_PING);
+  }
+  Serial.printf("[BATTERY] %s%s\n", text, quiet ? " (quiet hours: no chime)" : "");
 }
 
 static void updateBattery() {

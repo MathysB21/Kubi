@@ -33,7 +33,8 @@ static const float DAMPING      = 1.1f;   // 1/s rolling drag
 static const float MAX_SPEED    = 9.0f;   // cells/s; 0.045 cells per step << radius, no tunnelling
 static const float RESTITUTION  = 0.35f;  // wall bounce
 static const float FILTER_ALPHA = 0.35f;  // accelerometer low-pass per sample
-static const uint32_t CALIBRATE_MS = 250;
+static const uint32_t ARM_MS       = 400;   // still this long after entering the maze: put down
+static const float    ARM_STILL    = 0.6f;  // m/s^2 of drift that still counts as still (a hand on it)
 
 // --- Game rules ---
 static const float    HOLE_CAPTURE = 0.30f;  // centre this close to a hole centre -> falls in
@@ -44,9 +45,9 @@ static const uint32_t MAX_TIME_MS  = 999900; // HUD shows at most 999.9 s
 
 MazeGame::MazeGame()
     : _board(0), _viewFace(3), _transposed(false), _startX(1.5f), _startY(1.5f), _bx(1.5f), _by(1.5f),
-      _vx(0), _vy(0), _fx(0), _fy(0), _fz(0), _restX(0), _restY(0), _restZ(0),
-      _haveFilter(false), _calibrating(true), _calStart(0),
-      _calSumX(0), _calSumY(0), _calSumZ(0), _calN(0), _lastUpdateMs(0), _stepAccum(0), _lastInputMs(0),
+      _vx(0), _vy(0), _fx(0), _fy(0), _fz(0),
+      _haveFilter(false), _armed(false), _armX(0), _armY(0), _armZ(0), _armSince(0),
+      _lastUpdateMs(0), _stepAccum(0), _lastInputMs(0),
       _state(MAZE_READY), _stateSince(0), _runStart(0), _finishMs(0), _best(0), _newBest(false), _ballScale(1.0f),
       _cell(16), _ox(0), _oy(HUD_H), _drawnBallX(-1), _drawnBallY(-1), _drawnBallR(0),
       _drawnTenths(-1), _drawnState(MAZE_READY), _needFull(true) {
@@ -67,6 +68,10 @@ void MazeGame::begin() {
     int saved = prefs.getInt("mzCur", 0);
     prefs.end();
     loadBoard(saved);
+    // Just tipped onto its back: wait until it is put down before rolling.
+    // (The next board after a win does not wait; the player is mid-game.)
+    _armed = false;
+    _armSince = 0;
 }
 
 void MazeGame::loadBoard(int index) {
@@ -92,8 +97,6 @@ void MazeGame::loadBoard(int index) {
     _by = _startY;
     _vx = _vy = 0;
     _ballScale = 1.0f;
-    _calibrating = true;   // re-zero on the next update()
-    _calStart = 0;
     _lastInputMs = 0;
     _state = MAZE_READY;
     _stateSince = 0;
@@ -119,13 +122,6 @@ uint32_t MazeGame::elapsedMs(uint32_t nowMs) const {
     return t > MAX_TIME_MS ? MAX_TIME_MS : t;
 }
 
-void MazeGame::startCalibration(uint32_t nowMs) {
-    _calibrating = true;
-    _calStart = nowMs;
-    _calSumX = _calSumY = _calSumZ = 0;
-    _calN = 0;
-}
-
 void MazeGame::update(float ax, float ay, float az, uint32_t nowMs) {
     if (!_haveFilter) {
         _fx = ax; _fy = ay; _fz = az;
@@ -136,18 +132,17 @@ void MazeGame::update(float ax, float ay, float az, uint32_t nowMs) {
         _fz += FILTER_ALPHA * (az - _fz);
     }
 
-    if (_calibrating) {
-        if (_calStart == 0) startCalibration(nowMs ? nowMs : 1);
-        _calSumX += ax; _calSumY += ay; _calSumZ += az; _calN++;
-        if (nowMs - _calStart >= CALIBRATE_MS && _calN > 0) {
-            _restX = _calSumX / _calN;
-            _restY = _calSumY / _calN;
-            _restZ = _calSumZ / _calN;
-            _calibrating = false;
+    if (!_armed) {
+        float dx = _fx - _armX, dy = _fy - _armY, dz = _fz - _armZ;
+        if (_armSince == 0 || dx * dx + dy * dy + dz * dz > ARM_STILL * ARM_STILL) {
+            _armX = _fx; _armY = _fy; _armZ = _fz;   // still moving: start over
+            _armSince = nowMs ? nowMs : 1;
+        } else if (nowMs - _armSince >= ARM_MS) {
+            _armed = true;
             _lastUpdateMs = nowMs;
             _stepAccum = 0;
         }
-        return;
+        if (!_armed) return;
     }
 
     // Timed states: the ball does not roll
@@ -172,12 +167,13 @@ void MazeGame::update(float ax, float ay, float az, uint32_t nowMs) {
         return;
     }
 
-    // Tilt relative to rest, projected onto the screen axes of the view face
+    // Tilt from level, projected onto the screen axes of the view face
     // (FaceMap.h, shared with the sim's tilt injection). The cube lies on its
-    // back, so the screen's top and right edges are what tip.
+    // back, so the screen's top and right edges are what tip. Only the
+    // in-screen components count, so the Z offset does not matter.
     KVec3 up, right, out;
     screenFrame(_viewFace, up, right, out);
-    KVec3 d = { _fx - _restX, _fy - _restY, _fz - _restZ };
+    KVec3 d = { _fx - SCREEN_UP_LEVEL_X, _fy - SCREEN_UP_LEVEL_Y, 0 };
     float sx = -kDot(d, right);  // right edge down -> ball rolls right
     float sy =  kDot(d, up);     // top edge down   -> ball rolls up (screen y is down)
     // Screen axes to board axes: transposed, screen x is the board's row
