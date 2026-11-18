@@ -356,6 +356,7 @@ void setupAPIRoutes(AsyncWebServer& server) {
         AsyncResponseStream *response = request->beginResponseStream("application/json");
         JsonDocument doc;
 
+        doc["cpuMhz"] = getCpuFrequencyMhz();
         doc["accelX"] = diagAccelX;
         doc["accelY"] = diagAccelY;
         doc["accelZ"] = diagAccelZ;
