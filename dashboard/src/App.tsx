@@ -570,8 +570,8 @@ function KubiDashboard() {
       bodyContent: (
         <div className="space-y-4 text-sm">
           <p className="text-xs text-zinc-500 leading-relaxed">
-            Kubi chimes and shows a note when it is time to unplug or plug in. Tap Kubi to dismiss it. The charger
-            itself always fills the battery; this only reminds you.
+            Kubi chimes and shows a note when it is time to unplug or plug in (from 10 pm to 7 am just the note, no
+            chime). Tap Kubi to dismiss it. The charger itself always fills the battery; this only reminds you.
           </p>
           {[
             { label: "Remind me to unplug at", slider: alertHighSlider, saved: data.chargeAlertHigh ?? 0, min: 50, max: 100, key: "chargeAlertHigh" },
@@ -619,7 +619,7 @@ function KubiDashboard() {
         <div className="space-y-4 text-sm">
           <p className="text-xs text-zinc-500 leading-relaxed">
             Put Kubi to sleep when you are away: his screen, sound and WiFi switch off until someone picks him up.
-            He still charges while asleep. A full battery lasts about a week this way; for longer, switch him off.
+            He still charges while asleep. A full battery lasts about a week this way; for longer, keep him plugged in.
           </p>
           <button
             onClick={() => (napArmed ? napMutation.mutate() : setNapArmed(true))}

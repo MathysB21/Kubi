@@ -142,8 +142,22 @@ public:
             if (_state == BATTERY_DRAINING && _histCount >= 10 && _slow - vAgo(9) > 0.03f) {
                 setState(BATTERY_CHARGING, nowMs);
             }
-            // Ten minutes without a rise: really on battery
-            if (_histCount >= 10) _sure = true;
+            // Not sure yet (just started): the cell's trend has to decide. Mid
+            // charge it climbs only ~0.01 V per 10 min (the flat middle of the
+            // curve, net ~0.7 A into 5.2 Ah), too slow for the rule above: on
+            // 2026-11-19 a restart on the charger read "draining" for good. So
+            // a clear fall settles it at 10 min, anything else waits for 30 min
+            // of trend; and a cell held at 4.16 V+ is the charger's top-off.
+            if (!_sure && _state == BATTERY_DRAINING) {
+                if (_histCount >= 10 && _slow >= TOPOFF_V && vAgo(9) >= TOPOFF_V) {
+                    setState(BATTERY_CHARGING, nowMs);
+                } else if (_histCount >= 10 && _slow - vAgo(9) < -0.01f) {
+                    _sure = true;                       // clearly falling: on battery
+                } else if (_histCount >= 30) {
+                    if (_slow - vAgo(29) > 0.012f) setState(BATTERY_CHARGING, nowMs);
+                    else _sure = true;                  // half an hour without a rise
+                }
+            }
             learn();
         }
 
@@ -238,6 +252,8 @@ private:
         learned = learned > 0 ? learned + LEARN_WEIGHT * (live - learned) : live;
     }
     static const int WARMUP_READS = 3;      // ~6 s at one read per 2 s
+    // Under Kubi's ~0.3 A a full cell reads ~4.10 V; only the charger holds 4.16+
+    static constexpr float TOPOFF_V = 4.16f;
     int _warmup = 0;
     bool _disconnected = false, _sure = false, _empty = false;
     float _rawV = 0;
