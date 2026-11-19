@@ -78,7 +78,7 @@ interface KubiState {
   volume?: number; // chime volume, 0-100
   isSleeping?: boolean;
   batteryVoltage?: number;
-  batteryState?: "draining" | "charging" | "full";
+  batteryState?: "draining" | "charging" | "full" | "disconnected" | "checking";
   batteryMinutes?: number; // to empty or to full, -1 = still estimating
   pressure?: number; // hPa
   chargeAlertHigh?: number; // 0 = off
@@ -146,6 +146,8 @@ function formatDuration(minutes: number): string {
 
 function batteryLine(d: { batteryState?: string; batteryMinutes?: number }): string {
   const mins = d.batteryMinutes ?? -1;
+  if (d.batteryState === "disconnected") return "Battery cut off - plug in the USB-C charger";
+  if (d.batteryState === "checking") return "Just started, checking for the charger...";
   if (d.batteryState === "full") return "Full - you can unplug";
   if (d.batteryState === "charging") return mins >= 0 ? `Charging, full in ~${formatDuration(mins)}` : "Charging, estimating...";
   return mins >= 0 ? `~${formatDuration(mins)} left` : "On battery, estimating...";
@@ -742,8 +744,10 @@ function KubiDashboard() {
                 BATTERY
               </span>
               <span className="font-mono text-zinc-300">
-                {data.battery}%
-                {data.batteryVoltage ? <span className="text-zinc-500"> · {data.batteryVoltage.toFixed(2)} V</span> : null}
+                {data.batteryState === "disconnected" ? "No battery" : data.battery < 0 ? "--%" : `${data.battery}%`}
+                {data.batteryVoltage && data.batteryState !== "disconnected" ? (
+                  <span className="text-zinc-500"> · {data.batteryVoltage.toFixed(2)} V</span>
+                ) : null}
               </span>
               <span className="block text-[11px] text-zinc-500 mt-0.5">{batteryLine(data)}</span>
             </div>

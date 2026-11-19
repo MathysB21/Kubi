@@ -40,17 +40,54 @@ inline int batteryPercentFromVolts(float v) {
 // and a slow average of the voltage catch those steps; a rise over 10 minutes
 // catches a boot while already charging. Full: the charger has held the cell
 // at >= 4.17 V for 5 minutes (TP4056 stops at 4.2 V).
-enum BatteryState : uint8_t { BATTERY_DRAINING = 0, BATTERY_CHARGING = 1, BATTERY_FULL = 2 };
+// DISCONNECTED: the divider reads next to nothing, so the cells are not on the
+// circuit at all. Seen 2026-11-19 (0.22 V): the pack ran flat overnight and
+// the charger board's protection cut it off at ~2.5 V, while the ESP32's own
+// USB kept Kubi running. Only the USB-C charger reconnects it.
+enum BatteryState : uint8_t { BATTERY_DRAINING = 0, BATTERY_CHARGING = 1, BATTERY_FULL = 2,
+                              BATTERY_DISCONNECTED = 3 };
+
+// Below this the reading is not a cell (an empty 18650 rests at 2.5 V or more)
+static const float BATTERY_PRESENT_V = 2.0f;
+// Kubi shuts down (battery sleep, see main.cpp) once the draining average has
+// stayed under this for BATTERY_EMPTY_HOLD_MS: 0 % on the curve below, about
+// 3.4 V at rest, well clear of the protection's 2.5 V (the wiring guide's plan).
+static const float BATTERY_EMPTY_V = 3.30f;
+static const uint32_t BATTERY_EMPTY_HOLD_MS = 60000UL;
 
 class BatteryMonitor {
 public:
     // One raw cell voltage per call, every couple of seconds
     void update(float v, uint32_t nowMs) {
-        if (!_init) {
+        // Cells off the circuit: report that, keep nothing from it, and start
+        // afresh once they are back (the charger reconnects them)
+        if (v < BATTERY_PRESENT_V) {
+            _disconnected = true;
+            _rawV = v;
+            _init = false;
+            _lowSince = 0;
+            _empty = false;
+            return;
+        }
+        _disconnected = false;
+        // Warm-up: the first few readings after power-on (or reconnecting) only
+        // seed the averages. Plugging in the charger reads its own 4.2 V for a
+        // moment before the protection lets the cells back in (it showed 100 %
+        // and then dropped to 0 %, 2026-11-19).
+        if (!_init || _warmup > 0) {
+            if (!_init) {
+                _warmup = WARMUP_READS;
+                _state = BATTERY_DRAINING;  // until a step or a rise says otherwise
+                _histCount = 0;
+                _resync = false;
+                _highSince = 0;
+            }
             _fast = _slow = v;
             _init = true;
+            _sure = false;
             _stateSince = _minuteStart = nowMs;
             _shown = batteryPercentFromVolts(v);
+            _warmup--;
             return;
         }
         _fast += 0.4f * (v - _fast);
@@ -105,9 +142,28 @@ public:
             if (_state == BATTERY_DRAINING && _histCount >= 10 && _slow - vAgo(9) > 0.03f) {
                 setState(BATTERY_CHARGING, nowMs);
             }
+            // Ten minutes without a rise: really on battery
+            if (_histCount >= 10) _sure = true;
             learn();
         }
+
+        // Empty: sure it is draining, and the average has stayed low a while
+        if (_sure && _state == BATTERY_DRAINING && _slow < BATTERY_EMPTY_V) {
+            if (!_lowSince) _lowSince = nowMs ? nowMs : 1;
+            _empty = nowMs - _lowSince >= BATTERY_EMPTY_HOLD_MS;
+        } else {
+            _lowSince = 0;
+            _empty = false;
+        }
     }
+
+    // Still in the warm-up: voltage and percent are not worth showing yet
+    bool warming() const { return !_disconnected && (!_init || _warmup > 0); }
+    // True once Kubi should shut down to spare the cells (see BATTERY_EMPTY_V)
+    bool empty() const { return _empty; }
+    // False just after power-on until a plug-in step, a rise, or ten minutes
+    // of history says whether the charger is in: there is no charger signal
+    bool sure() const { return _sure && !_disconnected; }
 
     // --- Learned rates (percent per hour) ---
     // A slow average of every half-hour trend this cube has seen, kept in NVS
@@ -120,15 +176,17 @@ public:
     float learnedDrainPerHour() const { return _drainPerHour; }
     float learnedChargePerHour() const { return _chargePerHour; }
 
-    float voltage() const { return _slow; }
-    int percent() const { return _shown; }
-    BatteryState state() const { return _state; }
+    float voltage() const { return _disconnected ? _rawV : _slow; }
+    int percent() const { return _disconnected ? 0 : _shown; }
+    BatteryState state() const { return _disconnected ? BATTERY_DISCONNECTED : _state; }
 
     // Minutes to empty (draining) or to full (charging); -1 while it can't tell yet.
     // The learned rate carries the estimate; the last half hour can move it
     // by up to half once there is enough of it.
     int minutesLeft() const {
+        if (_disconnected) return -1;
         if (_state == BATTERY_FULL) return 0;
+        if (!_sure) return -1; // not "0 min left" while it may be charging
         bool draining = _state == BATTERY_DRAINING;
         float learned = draining ? _drainPerHour : _chargePerHour;
         int k;
@@ -179,6 +237,11 @@ private:
         float& learned = _state == BATTERY_DRAINING ? _drainPerHour : _chargePerHour;
         learned = learned > 0 ? learned + LEARN_WEIGHT * (live - learned) : live;
     }
+    static const int WARMUP_READS = 3;      // ~6 s at one read per 2 s
+    int _warmup = 0;
+    bool _disconnected = false, _sure = false, _empty = false;
+    float _rawV = 0;
+    uint32_t _lowSince = 0;
     bool _init = false, _resync = false;
     float _fast = 0, _slow = 0, _exact = 100;
     int _shown = 100;
@@ -192,6 +255,7 @@ private:
 
     void setState(BatteryState s, uint32_t nowMs) {
         _state = s;
+        _sure = true;    // a step or a rise: now it knows
         _stateSince = nowMs;
         _settleUntil = nowMs + SETTLE_MS;
         _highSince = 0;

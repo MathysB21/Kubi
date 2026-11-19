@@ -24,7 +24,9 @@ extern volatile int chargeAlertLow;
 extern volatile float roomPressure;
 
 static const char* batteryStateName(int s) {
-    return s == 2 ? "full" : s == 1 ? "charging" : "draining";
+    // 3 = cells cut off by the charger's protection; 4 = just started, not
+    // yet sure whether it is charging (main.cpp updateBattery)
+    return s == 4 ? "checking" : s == 3 ? "disconnected" : s == 2 ? "full" : s == 1 ? "charging" : "draining";
 }
 extern volatile bool isScreenOverrideActive;
 extern volatile bool factoryResetRequested;

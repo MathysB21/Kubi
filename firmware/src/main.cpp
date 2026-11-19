@@ -33,7 +33,7 @@
 volatile KubiMode currentMode            = MODE_CLOCK_IDLE; // Active face mode
 volatile float    roomTemperature        = 21.5f;           // BMP280 temperature
 volatile float    roomPressure           = 0.0f;            // BMP280 pressure, hPa
-volatile int      batteryPercentage      = 100;             // From the cell voltage (Battery.h)
+volatile int      batteryPercentage      = -1;              // From the cell voltage (Battery.h); -1 = not known yet
 volatile float    batteryVoltage         = 0.0f;            // Smoothed cell voltage, 0 until the first read
 volatile bool     isScreenOverrideActive = false;           // Brother's secret text alert flag
 volatile bool     factoryResetRequested  = false;           // Set by POST /api/factory-reset
@@ -393,18 +393,21 @@ static void napAdxlWrite(uint8_t reg, uint8_t value) {
   Wire.endTransmission();
 }
 
-// Backlight and both amp inputs held low while asleep: dark screen, no hiss
-[[noreturn]] static void napSleep() {
+// Backlight and both amp inputs held low while asleep: dark screen, no hiss.
+// Wakes after `seconds` for the check in setup() (nap or battery sleep).
+[[noreturn]] static void holdPinsAndSleep(uint32_t seconds) {
   for (gpio_num_t p : NAP_HOLD_PINS) {
     rtc_gpio_init(p);
     rtc_gpio_set_direction(p, RTC_GPIO_MODE_OUTPUT_ONLY);
     rtc_gpio_set_level(p, 0);
     rtc_gpio_hold_en(p);
   }
-  esp_sleep_enable_timer_wakeup((uint64_t)NAP_CHECK_S * 1000000ULL);
+  esp_sleep_enable_timer_wakeup((uint64_t)seconds * 1000000ULL);
   esp_deep_sleep_start();
   for (;;) {}
 }
+
+[[noreturn]] static void napSleep() { holdPinsAndSleep(NAP_CHECK_S); }
 
 static void releaseNapPins() {
   for (gpio_num_t p : NAP_HOLD_PINS) {
@@ -478,6 +481,56 @@ static bool reminderQuietHours() {
   return t.tm_hour >= REMINDER_QUIET_FROM_HOUR || t.tm_hour < REMINDER_QUIET_TO_HOUR;
 }
 
+// --- BATTERY SLEEP: the low-battery shutdown ---
+// The charger board's protection only cuts the cells off at ~2.5 V, deeper
+// than an 18650 should go, and Kubi ran them down to it overnight
+// (2026-11-19). Now, once BatteryMonitor::empty() (draining, average under
+// BATTERY_EMPTY_V for a minute), Kubi says so and deep-sleeps. Picking him up
+// does not wake him; only charging does: every BATTERY_SLEEP_CHECK_S the
+// ESP32 reads the cell before anything else in setup() and boots only on a
+// clear rise since the last check (plugging in lifts the reading ~0.08 V,
+// then it climbs) or once the cell is back above BATTERY_WAKE_V. The first
+// check only records, because the cell recovers ~0.1 V when the load stops.
+// Asleep, the boost converter, amp and DevKit still draw a few mA, so this
+// buys many hours below 3.3 V rather than protecting the cells forever.
+RTC_DATA_ATTR static bool  batterySleeping = false;
+RTC_DATA_ATTR static float batterySleepLastV = 0;
+#define BATTERY_SLEEP_CHECK_S 60
+#define BATTERY_WAKE_STEP_V   0.05f
+#define BATTERY_WAKE_V        3.75f
+static volatile bool batteryEmpty = false;
+
+// First thing in setup(): asleep for the battery, stay asleep unless charging
+static void checkBatterySleep() {
+  if (!batterySleeping) return;
+  if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER) {
+    float v = readBatteryVolts();
+    bool rising = batterySleepLastV > 0 && v - batterySleepLastV >= BATTERY_WAKE_STEP_V;
+    if (!rising && v < BATTERY_WAKE_V) {
+      batterySleepLastV = v;
+      holdPinsAndSleep(BATTERY_SLEEP_CHECK_S);
+    }
+  }
+  batterySleeping = false; // charging, recharged, or reset: start up properly
+}
+
+static bool reminderQuietHours();
+
+static void enterBatterySleep() {
+  Serial.printf("[BATTERY] Empty (%.2f V): sleeping until charged\n", battery.voltage());
+  display.requestWake();
+  display.drawBootScreen("Battery empty - charge me!");
+  if (!reminderQuietHours()) audio.playChime(CHIME_WAKE_PING);
+  vTaskDelay(pdMS_TO_TICKS(5000)); // long enough to read it
+  display.powerDown();
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  batterySleeping = true;
+  batterySleepLastV = 0;
+  Serial.flush();
+  holdPinsAndSleep(BATTERY_SLEEP_CHECK_S);
+}
+
 static void batteryReminder(const char* text) {
   char banner[OVERRIDE_TEXT_MAX];
   composeBanner(banner, sizeof(banner), "Kubi's battery", text); // calm title, not the alert one
@@ -496,10 +549,14 @@ static void updateBattery() {
   static BatteryState lastState = BATTERY_DRAINING;
 
   battery.update(readBatteryVolts(), millis());
-  batteryVoltage = battery.voltage();
-  batteryPercentage = battery.percent();
-  batteryStateCode = battery.state();
+  // Not shown during the warm-up (-1 = not known yet), or the charger's own
+  // 4.2 V at power-on flashes up as 100 %
+  batteryVoltage = battery.warming() ? 0.0f : battery.voltage();
+  batteryPercentage = battery.warming() ? -1 : battery.percent();
+  // 4 = "checking": just started, not yet sure whether the charger is in
+  batteryStateCode = (battery.state() == BATTERY_DISCONNECTED || battery.sure()) ? battery.state() : 4;
   batteryMinutesLeft = battery.minutesLeft();
+  if (battery.empty()) batteryEmpty = true; // the hardware loop shuts down
 
   // Keep the learned drain/charge rates across restarts (NVS "drainRate",
   // "chargeRate"), checked every 10 minutes and written only when one moved by
@@ -525,6 +582,7 @@ static void updateBattery() {
     }
   }
 
+  if (battery.warming()) return; // no reminders from a number not known yet
   BatteryState st = battery.state();
   if (st != lastState) {
     if (st == BATTERY_DRAINING) highDone = false; // unplugged: arm the unplug reminder for next time
@@ -537,7 +595,7 @@ static void updateBattery() {
     snprintf(msg, sizeof(msg), "Battery %d%% - unplug me!", batteryPercentage);
     batteryReminder(msg);
   }
-  if (chargeAlertLow > 0 && st == BATTERY_DRAINING && !lowDone && batteryPercentage <= chargeAlertLow) {
+  if (chargeAlertLow > 0 && st == BATTERY_DRAINING && battery.sure() && !lowDone && batteryPercentage <= chargeAlertLow) {
     lowDone = true;
     snprintf(msg, sizeof(msg), "Battery %d%% - plug me in!", batteryPercentage);
     batteryReminder(msg);
@@ -566,6 +624,9 @@ void core1HardwareTask(void * parameter) {
     }
     if (napRequested) {
       enterNap(); // does not return
+    }
+    if (batteryEmpty) {
+      enterBatterySleep(); // does not return
     }
 
     // A WiFi update is being written (see setupOTA): show it and pause the
@@ -812,7 +873,8 @@ void audioTask(void * parameter) {
 // ARDUINO SETUP
 // =============================================================================
 void setup() {
-  checkNap(); // before anything else: a nap check must be quick
+  checkBatterySleep(); // before anything else: these checks must be quick
+  checkNap();
   Serial.begin(115200);
   delay(500);
   Serial.println("\n=================================");
