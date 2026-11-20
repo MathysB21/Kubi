@@ -26,6 +26,12 @@ public:
     void setSleepTimeoutMinutes(int minutes); // 0 = never sleep
     // Backlight level while awake (faces like Ambient run dimmer). Fades.
     void setAwakeBrightness(uint8_t level);
+    // Night mode (NightMode.h): held dark keeps the screen off whatever the
+    // activity (noteActivity() then wakes nothing and returns true); releasing
+    // it wakes the screen. Night style draws the clock in dim red.
+    void setHeldDark(bool dark);
+    bool isHeldDark() const { return _heldDark; }
+    void setNightStyle(bool night);
     int  getSleepTimeoutMinutes() const { return _sleepTimeoutMin; }
 
     void drawBootScreen(const String& status);
@@ -61,6 +67,8 @@ private:
     volatile bool _sleeping;
     volatile bool _wakeRequested;
     bool _sleepAllowed;
+    bool _heldDark = false;
+    bool _nightStyle = false;
     int _sleepTimeoutMin;
     uint32_t _lastActivityTime;
     uint8_t _currentRotation;

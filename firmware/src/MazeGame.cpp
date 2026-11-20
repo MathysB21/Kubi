@@ -115,6 +115,34 @@ void MazeGame::loadBoard(int index) {
     prefs.end();
 }
 
+void MazeGame::resetProgress(bool mazeUp) {
+    Preferences prefs;
+    prefs.begin("kubi_settings", false);
+    char key[8];
+    for (int i = 0; i < MAZE_BOARD_COUNT; i++) {
+        snprintf(key, sizeof(key), "mzb%d", i);
+        if (prefs.getInt(key, 0) != 0) prefs.remove(key);
+    }
+    prefs.putInt("mzCur", 0);
+    prefs.end();
+    if (mazeUp) loadBoard(0);   // re-reads mzb0 (now gone) and keeps mzCur 0
+    else { _board = 0; _best = 0; }
+}
+
+void MazeGame::readProgress(int& current, int& solved) {
+    Preferences prefs;
+    prefs.begin("kubi_settings", true);
+    current = prefs.getInt("mzCur", 0);
+    solved = 0;
+    char key[8];
+    for (int i = 0; i < MAZE_BOARD_COUNT; i++) {
+        snprintf(key, sizeof(key), "mzb%d", i);
+        if (prefs.getInt(key, 0) > 0) solved++;
+    }
+    prefs.end();
+    if (current < 0 || current >= MAZE_BOARD_COUNT) current = 0;
+}
+
 uint32_t MazeGame::elapsedMs(uint32_t nowMs) const {
     uint32_t t = 0;
     if (_state == MAZE_WON) t = _finishMs;

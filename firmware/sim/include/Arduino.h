@@ -182,8 +182,11 @@ extern SimSerial Serial;
 extern uint8_t sim_backlight_value;
 inline void ledcSetup(uint8_t channel, uint32_t freq, uint8_t res) {}
 inline void ledcAttachPin(uint8_t pin, uint8_t channel) {}
-inline void ledcWrite(uint8_t channel, uint8_t value) {
-    sim_backlight_value = value;
+// The firmware drives the backlight at 12 bits (DisplayManager PWM_RES);
+// the sim reports it on the old 0-255 scale, never 0 while it is lit at all.
+inline void ledcWrite(uint8_t channel, uint32_t duty) {
+    uint32_t v = duty * 255 / 4095;
+    sim_backlight_value = (uint8_t)(duty > 0 && v == 0 ? 1 : v);
 }
 
 // Simulated Time

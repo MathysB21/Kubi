@@ -34,6 +34,13 @@ public:
     void begin();
     void loadBoard(int index);
 
+    // Back to board 1 with every best time forgotten (NVS mzCur, mzb<n>).
+    // Hardware loop only; reloads board 1 if the maze is up.
+    void resetProgress(bool mazeUp);
+    // The saved board index (0-based) and how many boards have a best time.
+    // Reads NVS only, so any task may call it.
+    static void readProgress(int& current, int& solved);
+
     // Feed the raw accelerometer (m/s^2) every loop iteration while the maze
     // face is up. Steering is real gravity: the reading's distance from the
     // level reading (SCREEN_UP_LEVEL_* in FaceMap.h), so level holds the ball

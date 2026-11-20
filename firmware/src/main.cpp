@@ -21,6 +21,7 @@
 #include "KubiScenes.h"
 #include "Battery.h"
 #include "SceneSchedule.h"
+#include "NightMode.h"
 #include <Wire.h>
 #include <esp_sleep.h>
 #include <driver/rtc_io.h>
@@ -90,6 +91,7 @@ static void pokeMascot() {
 
 // --- MAZE (screen up) ---
 int mazeViewFace = 0; // last upright face: the maze draws the way it did
+volatile bool mazeResetRequested = false; // POST /api/maze/reset; the hardware loop does it
 
 // --- NETWORK & TIME CONFIG ---
 const char* ntpServer          = "pool.ntp.org";
@@ -416,16 +418,43 @@ static void releaseNapPins() {
   }
 }
 
+// Nap wake log (2026-11-20): why each nap ended, so the wake sensitivity can be
+// judged on evidence before anyone changes NAP_ACT_THRESHOLD. NVS "napLog":
+// the last NAP_LOG_MAX NapWakeRecord (API.h), newest first; /api/diagnostics
+// shows them. One NVS write per nap.
+RTC_DATA_ATTR static uint32_t napStartedAt = 0; // epoch seconds, 0 = clock not set
+
+static void logNapWake(uint8_t reason, uint8_t axes) {
+  NapWakeRecord log[NAP_LOG_MAX] = {};
+  Preferences p;
+  p.begin("kubi_settings", false);
+  p.getBytes("napLog", log, sizeof(log));
+  memmove(&log[1], &log[0], sizeof(NapWakeRecord) * (NAP_LOG_MAX - 1));
+  time_t now = time(nullptr); // the RTC keeps the clock running through deep sleep
+  log[0] = {};
+  log[0].at = now > 1700000000 ? (uint32_t)now : 0;
+  log[0].start = napStartedAt;
+  log[0].reason = reason;
+  log[0].axes = axes;
+  p.putBytes("napLog", log, sizeof(log));
+  p.end();
+}
+
 // First thing in setup(): during a nap, go back to sleep unless Kubi was moved
 static void checkNap() {
   if (napping) {
+    uint8_t reason = NAP_WAKE_OTHER, axes = 0;
     if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER) {
       Wire.begin(21, 22);
       bool ok = true;
+      uint8_t status = napAdxlRead(0x2B, ok); // ACT_TAP_STATUS: the axes that set off activity
       uint8_t source = napAdxlRead(0x30, ok); // INT_SOURCE; reading clears the latch
       if (ok && !(source & 0x10)) napSleep();  // no activity: keep napping
+      reason = ok ? NAP_WAKE_MOVED : NAP_WAKE_SENSOR_SILENT;
+      axes = (status >> 4) & 0x07;             // ACT_X, ACT_Y, ACT_Z
     }
     napping = false; // picked up (or the sensor did not answer): wake properly
+    logNapWake(reason, axes);
   }
   releaseNapPins();
 }
@@ -446,6 +475,8 @@ static void enterNap() {
   display.powerDown();
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
+  time_t started = time(nullptr);
+  napStartedAt = started > 1700000000 ? (uint32_t)started : 0;
   napping = true;
   Serial.flush();
   napSleep();
@@ -470,15 +501,29 @@ static float readBatteryVolts() {
   return (mv / 32.0f) / 1000.0f / BATTERY_DIVIDER_RATIO;
 }
 
-// Quiet hours for the charge reminders: the 20 % ping woke the house at 01:20
-// (2026-11-18). At night the banner still goes up, but without the chime and
-// without waking a sleeping screen. Local time; unknown time counts as day.
-#define REMINDER_QUIET_FROM_HOUR 22
-#define REMINDER_QUIET_TO_HOUR    7
-static bool reminderQuietHours() {
+// --- NIGHT (NightMode.h) ---
+// Settings from NVS (setup) and the dashboard (API.cpp)
+volatile bool     nightEnabled      = true;
+volatile int      nightFromMin      = NIGHT_DEFAULT_FROM;
+volatile int      nightToMin        = NIGHT_DEFAULT_TO;
+volatile int      nightFaces        = NIGHT_DEFAULT_FACES;
+volatile int      nightLevel        = NIGHT_DEFAULT_LEVEL;
+volatile uint32_t nightPreviewUntil = 0;     // millis(); the app's "Preview night"
+volatile bool     nightActive       = false; // for /api/state
+
+// Inside the night hours right now (local time; unknown time counts as day)
+static bool inNightHours() {
   struct tm t;
   if (!getLocalTime(&t, 0)) return false;
-  return t.tm_hour >= REMINDER_QUIET_FROM_HOUR || t.tm_hour < REMINDER_QUIET_TO_HOUR;
+  return nightWindowContains(t.tm_hour * 60 + t.tm_min, nightFromMin, nightToMin);
+}
+
+// Quiet hours for the charge reminders: the 20 % ping woke the house at 01:20
+// (2026-11-18). In the night hours the banner still goes up, but without the
+// chime and without waking a sleeping screen. Night hours count even with
+// night mode itself switched off.
+static bool reminderQuietHours() {
+  return inNightHours();
 }
 
 // --- BATTERY SLEEP: the low-battery shutdown ---
@@ -696,6 +741,11 @@ void core1HardwareTask(void * parameter) {
 
     // Entering the maze face starts the current board afresh
     bool mazeActive = mazeFaceActive(currentMode);
+    if (mazeResetRequested) {        // the app's "Reset maze progress"
+      mazeResetRequested = false;
+      maze.resetProgress(mazeActive && mazeWasActive);
+      Serial.println("[MAZE] Progress reset: back to board 1, best times cleared");
+    }
     if (mazeActive && !mazeWasActive) {
       maze.setViewFace(mazeViewFace);
       maze.begin();
@@ -715,9 +765,35 @@ void core1HardwareTask(void * parameter) {
       maze.update(ax, ay, az, now);
     }
 
+    // 4b. Night mode (NightMode.h): in the night window only the allowed faces
+    // stay on, dimmed; any other face is held dark and a tap peeks at it.
+    // Rolling to another face at night also shows it for a peek.
+    static uint32_t nightCheckedAt = 0, nightPeekUntil = 0;
+    static bool nightTime = false;
+    static int nightLastMode = -1;
+    if (nightCheckedAt == 0 || now - nightCheckedAt >= 1000) {
+      nightCheckedAt = now;
+      nightTime = inNightHours();
+    }
+    if (nightPreviewUntil && (int32_t)(nightPreviewUntil - now) <= 0) nightPreviewUntil = 0;
+    bool night = (nightEnabled && nightTime) || nightPreviewUntil != 0;
+    nightActive = night;
+    if ((int)currentMode != nightLastMode) {
+      nightLastMode = (int)currentMode;
+      if (night) nightPeekUntil = now + NIGHT_PEEK_MS;
+    }
+    if (nightPeekUntil && (int32_t)(nightPeekUntil - now) <= 0) nightPeekUntil = 0;
+    bool nightDark = night && !nightFaceAllowed(nightFaces, (int)currentMode) && nightPeekUntil == 0;
+    display.setNightStyle(night);
+    display.setHeldDark(nightDark);
+
     // 5. Gesture Handling (Streamlined: Tap = Dismiss/Pause/Play, Shake = Skip)
     KubiGesture gesture = sensors.getRecentGesture();
-    if (gesture != GESTURE_NONE) {
+    if (gesture != GESTURE_NONE && nightDark) {
+      // Dark at night: a tap only peeks; nothing else happens
+      if (gesture == GESTURE_TAP) nightPeekUntil = now + NIGHT_PEEK_MS;
+    } else if (gesture != GESTURE_NONE) {
+      if (nightPeekUntil) nightPeekUntil = now + NIGHT_PEEK_MS; // still using it: keep the peek going
       if (display.noteActivity()) {
         // Gesture only woke the screen: swallow it, silently (it may be night)
       } else {
@@ -780,7 +856,9 @@ void core1HardwareTask(void * parameter) {
     bool bannerUp = isScreenOverrideActive || addressScreenUntil;
     // A held scene (dashboard or Creator preview) keeps the screen awake
     display.setSleepAllowed(modeMaySleep(currentMode) && !bannerUp && mascotPreviewScene < 0);
-    display.setAwakeBrightness(currentMode == MODE_AMBIENT && !bannerUp ? AmbientFace::BACKLIGHT : 255);
+    uint8_t awakeLevel = currentMode == MODE_AMBIENT && !bannerUp ? AmbientFace::BACKLIGHT : 255;
+    if (night) awakeLevel = nightBacklight(nightLevel); // everything right down at night
+    display.setAwakeBrightness(awakeLevel);
 
     // 6. Display Rendering (~20Hz tick)
     uint32_t renderTick = mazeActive ? RENDER_TICK_MAZE_MS : RENDER_TICK_MS;
@@ -932,6 +1010,11 @@ void setup() {
   preferences.begin("kubi_settings", false);
   tzOffset        = preferences.getInt("tzOffset", 2);
   clockAnalogView = preferences.getBool("clockAnalog", false);
+  nightEnabled    = preferences.getBool("nightOn", true);
+  nightFromMin    = preferences.getInt("nightFrom", NIGHT_DEFAULT_FROM);
+  nightToMin      = preferences.getInt("nightTo", NIGHT_DEFAULT_TO);
+  nightFaces      = preferences.getInt("nightFaces", NIGHT_DEFAULT_FACES);
+  nightLevel      = preferences.getInt("nightLvl", NIGHT_DEFAULT_LEVEL);
   birthdayMMDD = preferences.getInt("bday", 0);
   chargeAlertHigh = preferences.getInt("alertHi", 0);
   chargeAlertLow = preferences.getInt("alertLo", 0);

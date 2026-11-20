@@ -10,6 +10,8 @@
 #include "KubiScenes.h"
 #include "SceneSchedule.h"
 #include "SensorManager.h"
+#include "NightMode.h"
+#include "MazeGame.h"
 #include <esp_system.h>
 
 // --- SHARED GLOBALS (Defined in main.cpp) ---
@@ -37,6 +39,16 @@ extern volatile uint32_t mascotPreviewAt;
 extern volatile uint32_t mascotPreviewMs;
 extern volatile int birthdayMMDD;
 extern volatile bool napRequested;
+
+// Night mode and maze reset (main.cpp)
+extern volatile bool nightEnabled;
+extern volatile int nightFromMin;
+extern volatile int nightToMin;
+extern volatile int nightFaces;
+extern volatile int nightLevel;
+extern volatile uint32_t nightPreviewUntil;
+extern volatile bool nightActive;
+extern volatile bool mazeResetRequested;
 
 // Diagnostics
 extern volatile float diagAccelX;
@@ -100,6 +112,23 @@ void setupAPIRoutes(AsyncWebServer& server) {
         doc["sleepTimeoutMin"] = display.getSleepTimeoutMinutes();
         doc["isSleeping"] = display.isSleeping();
         doc["volume"] = (int)lroundf(audio.getVolume() * 100.0f);
+
+        // Night mode (NightMode.h); times in minutes after midnight
+        doc["nightOn"] = nightEnabled;
+        doc["nightFrom"] = nightFromMin;
+        doc["nightTo"] = nightToMin;
+        doc["nightFaces"] = nightFaces;
+        doc["nightLevel"] = nightLevel;
+        doc["nightLevels"] = NIGHT_LEVEL_COUNT;
+        doc["isNight"] = nightActive;
+        doc["nightPreview"] = nightPreviewUntil != 0;
+
+        // Maze progress: the board he is on (1-based) and how many have a best time
+        int mazeCurrent = 0, mazeSolved = 0;
+        MazeGame::readProgress(mazeCurrent, mazeSolved);
+        doc["mazeBoard"] = mazeCurrent + 1;
+        doc["mazeCount"] = MAZE_BOARD_COUNT;
+        doc["mazeSolved"] = mazeSolved;
 
         serializeJson(doc, *response);
         request->send(response);
@@ -220,6 +249,39 @@ void setupAPIRoutes(AsyncWebServer& server) {
             audio.playChime(CHIME_TAP_FEEDBACK);
         }
 
+        // Night mode. Times are minutes after midnight; faces a KubiMode bit
+        // mask. A new brightness level previews itself so it can be judged.
+        {
+            Preferences prefs;
+            bool opened = false;
+            auto open = [&]() { if (!opened) { prefs.begin("kubi_settings", false); opened = true; } };
+            if (jsonObj["nightOn"].is<bool>()) {
+                nightEnabled = jsonObj["nightOn"].as<bool>();
+                open(); prefs.putBool("nightOn", nightEnabled);
+            }
+            if (jsonObj["nightFrom"].is<int>()) {
+                nightFromMin = constrain(jsonObj["nightFrom"].as<int>(), 0, 1439);
+                open(); prefs.putInt("nightFrom", nightFromMin);
+            }
+            if (jsonObj["nightTo"].is<int>()) {
+                nightToMin = constrain(jsonObj["nightTo"].as<int>(), 0, 1439);
+                open(); prefs.putInt("nightTo", nightToMin);
+            }
+            if (jsonObj["nightFaces"].is<int>()) {
+                nightFaces = jsonObj["nightFaces"].as<int>() & NIGHT_ALL_FACES;
+                open(); prefs.putInt("nightFaces", nightFaces);
+            }
+            if (jsonObj["nightLevel"].is<int>()) {
+                nightLevel = constrain(jsonObj["nightLevel"].as<int>(), 1, NIGHT_LEVEL_COUNT);
+                open(); prefs.putInt("nightLvl", nightLevel);
+                nightPreviewUntil = millis() + NIGHT_PREVIEW_MS;
+            }
+            if (opened) prefs.end();
+            if (jsonObj["nightPreview"].is<bool>()) {
+                nightPreviewUntil = jsonObj["nightPreview"].as<bool>() ? millis() + NIGHT_PREVIEW_MS : 0;
+            }
+        }
+
         // 5. Screen sleep timeout (minutes, 0 = never)
         if (jsonObj["sleepTimeoutMin"].is<int>()) {
             display.setSleepTimeoutMinutes(jsonObj["sleepTimeoutMin"].as<int>());
@@ -302,6 +364,20 @@ void setupAPIRoutes(AsyncWebServer& server) {
     server.addHandler(chimeHandler);
 
     // =========================================================================
+    // 4b2. POST /api/maze/reset {"confirm": true}: back to board 1, every best
+    // time forgotten. The hardware loop does it (it owns the maze).
+    // =========================================================================
+    AsyncCallbackJsonWebHandler* mazeResetHandler = new AsyncCallbackJsonWebHandler("/api/maze/reset", [](AsyncWebServerRequest *request, JsonVariant &json) {
+        if (!(json["confirm"] | false)) {
+            request->send(400, "application/json", "{\"error\":\"confirm required\"}");
+            return;
+        }
+        mazeResetRequested = true;
+        request->send(200, "application/json", "{\"status\":\"resetting\"}");
+    });
+    server.addHandler(mazeResetHandler);
+
+    // =========================================================================
     // 4c. Motion recorder, for tuning gestures on the real cube
     // POST /api/motion-log {"seconds": 1-30} starts a recording.
     // GET  /api/motion-log: {"state":0|1} while idle or recording; once done,
@@ -380,6 +456,38 @@ void setupAPIRoutes(AsyncWebServer& server) {
         int rr = (int)esp_reset_reason();
         doc["resetReason"] = (rr >= 0 && rr <= 10) ? RESET_NAMES[rr] : "other";
         doc["mode"] = (int)currentMode;
+
+        // Why the last naps ended (main.cpp checkNap), newest first, local time
+        {
+            NapWakeRecord log[NAP_LOG_MAX] = {};
+            Preferences prefs;
+            prefs.begin("kubi_settings", true);
+            prefs.getBytes("napLog", log, sizeof(log));
+            prefs.end();
+            JsonArray wakes = doc["napWakes"].to<JsonArray>();
+            for (const NapWakeRecord& w : log) {
+                if (w.reason == NAP_WAKE_NONE) continue;
+                JsonObject o = wakes.add<JsonObject>();
+                char when[24] = "unknown";
+                if (w.at) {
+                    time_t t = (time_t)w.at;
+                    struct tm lt;
+                    localtime_r(&t, &lt);
+                    strftime(when, sizeof(when), "%Y-%m-%d %H:%M:%S", &lt);
+                }
+                o["at"] = when;
+                if (w.at && w.start && w.at >= w.start) o["nappedMin"] = (w.at - w.start) / 60;
+                o["reason"] = w.reason == NAP_WAKE_MOVED ? "moved"
+                            : w.reason == NAP_WAKE_SENSOR_SILENT ? "sensor silent" : "reset or power";
+                if (w.reason == NAP_WAKE_MOVED) {
+                    char axes[8] = "";
+                    if (w.axes & 4) strcat(axes, "x");
+                    if (w.axes & 2) strcat(axes, "y");
+                    if (w.axes & 1) strcat(axes, "z");
+                    o["axes"] = axes[0] ? axes : "none";
+                }
+            }
+        }
 
         serializeJson(doc, *response);
         request->send(response);

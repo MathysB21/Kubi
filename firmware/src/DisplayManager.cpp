@@ -8,9 +8,24 @@
 #define BACKLIGHT_PIN 32
 #define PWM_CHANNEL   0
 #define PWM_FREQ      5000
-#define PWM_RES       8
+#define PWM_RES       12   // 12-bit so night mode can go far below 1/255
 
 DisplayManager display;
+
+// Backlight level (0-255, what the rest of the code uses) to 12-bit PWM duty.
+// 16 and up is the old linear 8-bit scale; below 16 the curve bends down to
+// 1/4095 so night mode can glow very faintly (night levels, NightMode.h).
+// Night clock colours: pure red, no green or blue light at all
+static const uint16_t NIGHT_RED     = 0xF800;
+static const uint16_t NIGHT_RED_DIM = 0x7800;
+
+static uint32_t dutyForLevel(uint8_t level) {
+    if (level == 0) return 0;
+    if (level >= 255) return 4095;
+    if (level >= 16) return (uint32_t)level * 16;
+    uint32_t d = ((uint32_t)level * level + 8) / 16;
+    return d < 1 ? 1 : d;
+}
 
 DisplayManager::DisplayManager()
     : _tft(),
@@ -49,7 +64,24 @@ void DisplayManager::init() {
 
 void DisplayManager::setBacklight(uint8_t brightness) {
     _currentBacklight = brightness;
-    ledcWrite(PWM_CHANNEL, brightness);
+    ledcWrite(PWM_CHANNEL, dutyForLevel(brightness));
+}
+
+void DisplayManager::setHeldDark(bool dark) {
+    if (dark == _heldDark) return;
+    _heldDark = dark;
+    if (dark) {
+        if (!_sleeping) setSleep(true);   // fades out
+    } else {
+        _lastActivityTime = millis();
+        if (_sleeping) setSleep(false);   // a peek, a face change or morning
+    }
+}
+
+void DisplayManager::setNightStyle(bool night) {
+    if (night == _nightStyle) return;
+    _nightStyle = night;
+    _fullRedraw = true; // repaint the clock in its other colours
 }
 
 void DisplayManager::powerDown() {
@@ -78,6 +110,7 @@ void DisplayManager::setAwakeBrightness(uint8_t level) {
 
 bool DisplayManager::noteActivity() {
     _lastActivityTime = millis();
+    if (_heldDark) return true; // night: only a peek (setHeldDark(false)) lights it
     if (_sleeping) {
         setSleep(false);
         Serial.println("[DISPLAY] Woke from inactivity sleep");
@@ -94,7 +127,7 @@ void DisplayManager::setSleepAllowed(bool allowed) {
     if (allowed == _sleepAllowed) return;
     _sleepAllowed = allowed;
     _lastActivityTime = millis(); // Timer starts fresh when entering a sleeping face
-    if (!allowed && _sleeping) {
+    if (!allowed && _sleeping && !_heldDark) {
         setSleep(false);
     }
 }
@@ -104,7 +137,7 @@ void DisplayManager::setSleepTimeoutMinutes(int minutes) {
     if (minutes > 120) minutes = 120;
     _sleepTimeoutMin = minutes;
     _lastActivityTime = millis();
-    if (minutes == 0 && _sleeping) {
+    if (minutes == 0 && _sleeping && !_heldDark) {
         setSleep(false);
     }
 }
@@ -112,7 +145,7 @@ void DisplayManager::setSleepTimeoutMinutes(int minutes) {
 void DisplayManager::loop() {
     if (_wakeRequested) {
         _wakeRequested = false;
-        noteActivity();
+        noteActivity(); // no-op while held dark
     }
 
     if (!_sleeping && _sleepAllowed && _sleepTimeoutMin > 0 &&
@@ -220,13 +253,15 @@ void DisplayManager::drawClockFace(int hour, int minute, int wday, int mday, int
     bool hasDate = formatDate(dateBuf, sizeof(dateBuf), wday, mday, month);
 
     // Pure Minimalist Mode. Opaque text + full-width padding overwrites the
-    // previous minute in place, no clear needed.
+    // previous minute in place, no clear needed. At night: red only, the least
+    // light an LCD can give with its backlight right down.
     _tft.setTextDatum(MC_DATUM);
-    _tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    _tft.setTextColor(_nightStyle ? NIGHT_RED : TFT_WHITE, TFT_BLACK);
     _tft.setTextPadding(w);
     _tft.drawString(timeBuf, cx, cy, 7); // Large 7-segment digital font
 
     if (hasDate && (full || mday != _drawnMday)) {
+        if (_nightStyle) _tft.setTextColor(NIGHT_RED_DIM, TFT_BLACK);
         _tft.drawString(dateBuf, cx, cy + 40, 2);
     }
     _tft.setTextPadding(0);
@@ -245,8 +280,14 @@ void DisplayManager::drawAnalogClockFace(int hour, int minute, int wday, int mda
     int cx = w / 2;
     int cy = h / 2;
 
+    // Night: everything in reds (see drawClockFace)
+    const uint16_t numCol  = _nightStyle ? NIGHT_RED_DIM : TFT_WHITE;
+    const uint16_t hourCol = _nightStyle ? NIGHT_RED : TFT_ORANGE;
+    const uint16_t minCol  = _nightStyle ? NIGHT_RED : TFT_WHITE;
+    const uint16_t dateCol = _nightStyle ? NIGHT_RED_DIM : TFT_LIGHTGREY;
+
     _tft.setTextDatum(MC_DATUM);
-    _tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    _tft.setTextColor(numCol, TFT_BLACK);
 
     if (full) {
         // 12 Numbers arranged in clock circle (static, drawn once)
@@ -282,9 +323,9 @@ void DisplayManager::drawAnalogClockFace(int hour, int minute, int wday, int mda
     if (hlen > 0.1f) {
         float hnx = -hdy / hlen;
         float hny = hdx / hlen;
-        _tft.drawLine(cx, cy, hx, hy, TFT_ORANGE);
-        _tft.drawLine(cx + (int)round(hnx), cy + (int)round(hny), hx + (int)round(hnx), hy + (int)round(hny), TFT_ORANGE);
-        _tft.drawLine(cx - (int)round(hnx), cy - (int)round(hny), hx - (int)round(hnx), hy - (int)round(hny), TFT_ORANGE);
+        _tft.drawLine(cx, cy, hx, hy, hourCol);
+        _tft.drawLine(cx + (int)round(hnx), cy + (int)round(hny), hx + (int)round(hnx), hy + (int)round(hny), hourCol);
+        _tft.drawLine(cx - (int)round(hnx), cy - (int)round(hny), hx - (int)round(hnx), hy - (int)round(hny), hourCol);
     }
 
     // Minute arm: long white line (2px wide)
@@ -298,20 +339,20 @@ void DisplayManager::drawAnalogClockFace(int hour, int minute, int wday, int mda
     if (mlen > 0.1f) {
         float mnx = -mdy / mlen;
         float mny = mdx / mlen;
-        _tft.drawLine(cx, cy, mx, my, TFT_WHITE);
+        _tft.drawLine(cx, cy, mx, my, minCol);
         _tft.drawLine(cx + (int)round(mnx * 0.7f), cy + (int)round(mny * 0.7f),
-                      mx + (int)round(mnx * 0.7f), my + (int)round(mny * 0.7f), TFT_WHITE);
+                      mx + (int)round(mnx * 0.7f), my + (int)round(mny * 0.7f), minCol);
     }
 
     // Center pivot
-    _tft.fillCircle(cx, cy, 3, TFT_ORANGE);
-    _tft.fillCircle(cx, cy, 1, TFT_WHITE);
+    _tft.fillCircle(cx, cy, 3, hourCol);
+    _tft.fillCircle(cx, cy, 1, _nightStyle ? NIGHT_RED_DIM : TFT_WHITE);
 
     // Current date at bottom
     char dateBuf[32];
     if ((full || mday != _drawnMday) && formatDate(dateBuf, sizeof(dateBuf), wday, mday, month)) {
         _tft.setTextDatum(MC_DATUM);
-        _tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+        _tft.setTextColor(dateCol, TFT_BLACK);
         _tft.setTextPadding(w);
         _tft.drawString(dateBuf, cx, cy + 124, 2);
         _tft.setTextPadding(0);

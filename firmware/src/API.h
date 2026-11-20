@@ -67,6 +67,22 @@ inline KubiChime chimeByName(const char* name) {
 // is showing.
 #define MASCOT_PREVIEW_MAX_MIN 720
 
+// Nap wake log (main.cpp checkNap, NVS "napLog"), newest first
+enum NapWakeReason : uint8_t {
+    NAP_WAKE_NONE = 0,          // empty slot
+    NAP_WAKE_MOVED = 1,         // the accelerometer's activity latch (> 0.5 g change)
+    NAP_WAKE_SENSOR_SILENT = 2, // the accelerometer did not answer: woke to be safe
+    NAP_WAKE_OTHER = 3          // not a timer wake (reset button, power)
+};
+struct NapWakeRecord {
+    uint32_t at;      // epoch seconds of the wake (0 = clock unknown)
+    uint32_t start;   // epoch seconds the nap began (0 = unknown)
+    uint8_t  reason;  // NapWakeReason
+    uint8_t  axes;    // bit 2 X, bit 1 Y, bit 0 Z: which axes set off the activity
+    uint8_t  pad[2];
+};
+#define NAP_LOG_MAX 5
+
 // First connect after setup: how long the "open kubi.local" screen stays up
 // unless tapped away.
 #define ADDRESS_SCREEN_MS (5UL * 60UL * 1000UL)

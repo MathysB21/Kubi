@@ -23,6 +23,7 @@
 #include "FaceMap.h"
 #include "KubiScenes.h"
 #include "SceneSchedule.h"
+#include "NightMode.h"
 #include "API.h"
 #include "ArduinoJson.h"
 
@@ -103,6 +104,22 @@ static int wrapMascotScene(int index) {
 
 // --- MAZE (screen up) --- (mirrors main.cpp)
 int mazeViewFace = 0;
+static std::atomic<bool> mazeResetRequested(false);
+
+// --- NIGHT (NightMode.h, mirrors main.cpp) --- the Time Machine slider drives it
+static bool nightEnabled = true;
+static int nightFromMin = NIGHT_DEFAULT_FROM;
+static int nightToMin = NIGHT_DEFAULT_TO;
+static int nightFaces = NIGHT_DEFAULT_FACES;
+static int nightLevel = NIGHT_DEFAULT_LEVEL;
+static std::atomic<uint32_t> nightPreviewUntil(0);
+static std::atomic<bool> nightActive(false);
+
+static bool inNightHours() {
+    struct tm t;
+    if (!getLocalTime(&t)) return false;
+    return nightWindowContains(t.tm_hour * 60 + t.tm_min, nightFromMin, nightToMin);
+}
 
 // Helper: Convert 16-bit RGB565 to 32-bit RGBA (for web canvas)
 static void convertRGB565toRGBA32(const uint16_t* src, uint8_t* dst, int count) {
@@ -216,6 +233,10 @@ void hardwareSimulationThread() {
         display.setRotationForFace(rotationFaceFor(currentMode));
 
         bool mazeActive = mazeFaceActive(currentMode);
+        if (mazeResetRequested.exchange(false)) { // mirrors main.cpp
+            maze.resetProgress(mazeActive && mazeWasActive);
+            std::cout << "[MAZE] Progress reset: back to board 1, best times cleared" << std::endl;
+        }
         if (mazeActive && !mazeWasActive) {
             maze.setViewFace(mazeViewFace);
             maze.begin();
@@ -234,13 +255,38 @@ void hardwareSimulationThread() {
             maze.update(ax, ay, az, now);
         }
 
+        // 4b. Night mode (mirrors main.cpp)
+        static uint32_t nightCheckedAt = 0, nightPeekUntil = 0;
+        static bool nightTime = false;
+        static int nightLastMode = -1;
+        if (nightCheckedAt == 0 || now - nightCheckedAt >= 1000) {
+            nightCheckedAt = now;
+            nightTime = inNightHours();
+        }
+        uint32_t preview = nightPreviewUntil.load();
+        if (preview && (int32_t)(preview - now) <= 0) { nightPreviewUntil = 0; preview = 0; }
+        bool night = (nightEnabled && nightTime) || preview != 0;
+        nightActive = night;
+        if ((int)currentMode != nightLastMode) {
+            nightLastMode = (int)currentMode;
+            if (night) nightPeekUntil = now + NIGHT_PEEK_MS;
+        }
+        if (nightPeekUntil && (int32_t)(nightPeekUntil - now) <= 0) nightPeekUntil = 0;
+        bool nightDark = night && !nightFaceAllowed(nightFaces, (int)currentMode) && nightPeekUntil == 0;
+        display.setNightStyle(night);
+        display.setHeldDark(nightDark);
+
         // 5. Gesture Handling
         KubiGesture gesture = sensors.getRecentGesture();
         KubiGesture injected = sim_injected_gesture.exchange(GESTURE_NONE);
         if (injected != GESTURE_NONE) {
             gesture = injected;
         }
-        if (gesture != GESTURE_NONE) {
+        if (gesture != GESTURE_NONE && nightDark) {
+            if (gesture == GESTURE_TAP) nightPeekUntil = now + NIGHT_PEEK_MS; // dark: a tap only peeks
+            std::cout << "[SIM NIGHT] Dark: " << (gesture == GESTURE_TAP ? "peek" : "ignored") << std::endl;
+        } else if (gesture != GESTURE_NONE) {
+            if (nightPeekUntil) nightPeekUntil = now + NIGHT_PEEK_MS;
             if (display.noteActivity()) {
                 std::cout << "[SIM GESTURE] Gesture woke the screen (swallowed)." << std::endl;
             } else {
@@ -324,7 +370,9 @@ void hardwareSimulationThread() {
         bool bannerUp = isScreenOverrideActive || addressScreenUntil;
         // A held scene (dashboard or Creator preview) keeps the screen awake
         display.setSleepAllowed(modeMaySleep(currentMode) && !bannerUp && mascotPreviewScene < 0);
-        display.setAwakeBrightness(currentMode == MODE_AMBIENT && !bannerUp ? AmbientFace::BACKLIGHT : 255);
+        uint8_t awakeLevel = currentMode == MODE_AMBIENT && !bannerUp ? AmbientFace::BACKLIGHT : 255;
+        if (night) awakeLevel = nightBacklight(nightLevel);
+        display.setAwakeBrightness(awakeLevel);
 
         // 6. Display Rendering: same ticks as hardware (was 40 ms here, 50 there)
         uint32_t renderTick = mazeActive ? RENDER_TICK_MAZE_MS : RENDER_TICK_MS;
@@ -458,6 +506,11 @@ int main() {
     birthdayMMDD = prefs.getInt("bday", 0);
     display.setSleepTimeoutMinutes(prefs.getInt("sleepMin", 5));
     audio.setVolume(prefs.getInt("volume", 25) / 100.0f);
+    nightEnabled = prefs.getBool("nightOn", true);
+    nightFromMin = prefs.getInt("nightFrom", NIGHT_DEFAULT_FROM);
+    nightToMin   = prefs.getInt("nightTo", NIGHT_DEFAULT_TO);
+    nightFaces   = prefs.getInt("nightFaces", NIGHT_DEFAULT_FACES);
+    nightLevel   = prefs.getInt("nightLvl", NIGHT_DEFAULT_LEVEL);
     prefs.end();
 
     display.init();
@@ -529,6 +582,21 @@ int main() {
             doc["birthday"] = bday;
         }
         doc["volume"] = (int)lroundf(audio.getVolume() * 100.0f);
+
+        // Night mode and maze progress (mirrors API.cpp)
+        doc["nightOn"] = nightEnabled;
+        doc["nightFrom"] = nightFromMin;
+        doc["nightTo"] = nightToMin;
+        doc["nightFaces"] = nightFaces;
+        doc["nightLevel"] = nightLevel;
+        doc["nightLevels"] = NIGHT_LEVEL_COUNT;
+        doc["isNight"] = nightActive.load();
+        doc["nightPreview"] = nightPreviewUntil.load() != 0;
+        int mazeCurrent = 0, mazeSolved = 0;
+        MazeGame::readProgress(mazeCurrent, mazeSolved);
+        doc["mazeBoard"] = mazeCurrent + 1;
+        doc["mazeCount"] = MAZE_BOARD_COUNT;
+        doc["mazeSolved"] = mazeSolved;
 
         std::string jsonStr;
         serializeJson(doc, jsonStr);
@@ -632,6 +700,26 @@ int main() {
             prefs.end();
         }
 
+        // Night mode (mirrors API.cpp)
+        {
+            Preferences prefs;
+            prefs.begin("kubi_settings", false);
+            auto clampi = [](int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); };
+            if (jsonObj["nightOn"].is<bool>()) { nightEnabled = jsonObj["nightOn"].as<bool>(); prefs.putBool("nightOn", nightEnabled); }
+            if (jsonObj["nightFrom"].is<int>()) { nightFromMin = clampi(jsonObj["nightFrom"].as<int>(), 0, 1439); prefs.putInt("nightFrom", nightFromMin); }
+            if (jsonObj["nightTo"].is<int>()) { nightToMin = clampi(jsonObj["nightTo"].as<int>(), 0, 1439); prefs.putInt("nightTo", nightToMin); }
+            if (jsonObj["nightFaces"].is<int>()) { nightFaces = jsonObj["nightFaces"].as<int>() & NIGHT_ALL_FACES; prefs.putInt("nightFaces", nightFaces); }
+            if (jsonObj["nightLevel"].is<int>()) {
+                nightLevel = clampi(jsonObj["nightLevel"].as<int>(), 1, NIGHT_LEVEL_COUNT);
+                prefs.putInt("nightLvl", nightLevel);
+                nightPreviewUntil = millis() + NIGHT_PREVIEW_MS;
+            }
+            prefs.end();
+            if (jsonObj["nightPreview"].is<bool>()) {
+                nightPreviewUntil = jsonObj["nightPreview"].as<bool>() ? millis() + NIGHT_PREVIEW_MS : 0;
+            }
+        }
+
         // Mirrors API.cpp: volume 0-100 %, confirmed with a tap chime
         if (jsonObj["volume"].is<int>()) {
             int v = jsonObj["volume"].as<int>();
@@ -710,6 +798,19 @@ int main() {
     });
 
     // Mirrors API.cpp 4b: POST /api/chime {"chime": name}
+    // Mirrors API.cpp: POST /api/maze/reset {"confirm": true}
+    svr.Post("/api/maze/reset", [](const httplib::Request& req, httplib::Response& res) {
+        addCors(res);
+        JsonDocument body;
+        if (deserializeJson(body, req.body) || !(body["confirm"] | false)) {
+            res.status = 400;
+            res.set_content("{\"error\":\"confirm required\"}", "application/json");
+            return;
+        }
+        mazeResetRequested = true;
+        res.set_content("{\"status\":\"resetting\"}", "application/json");
+    });
+
     svr.Post("/api/chime", [](const httplib::Request& req, httplib::Response& res) {
         addCors(res);
         JsonDocument json;

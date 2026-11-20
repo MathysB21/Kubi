@@ -16,6 +16,7 @@ import {
   RotateCcw,
   Sliders,
   Moon,
+  MoonStar,
   WifiOff,
   Palette,
   Volume2,
@@ -86,6 +87,19 @@ interface KubiState {
   mascotScene?: number;
   mascotPreview?: boolean; // true while a scene picked here is showing
   mascotPreviewLeftMin?: number; // minutes left on that preview
+  // Night mode (firmware NightMode.h); times are minutes after midnight
+  nightOn?: boolean;
+  nightFrom?: number;
+  nightTo?: number;
+  nightFaces?: number; // bit per face mode: 0 clock, 1 Pomodoro, 2 mascot, 3 ambient, 4 maze
+  nightLevel?: number; // 1 (faintest) .. nightLevels
+  nightLevels?: number;
+  isNight?: boolean;
+  nightPreview?: boolean;
+  // Maze progress
+  mazeBoard?: number; // 1-based board he is on
+  mazeCount?: number;
+  mazeSolved?: number; // boards with a best time
   pomodoro: PomodoroState;
   [key: string]: any;
 }
@@ -144,10 +158,33 @@ function formatDuration(minutes: number): string {
   return m === 0 ? `${h} h` : `${h} h ${m} min`;
 }
 
+// Night mode: which faces may stay on (bit = face mode id)
+const NIGHT_FACE_OPTIONS = [
+  { bit: 0, label: "Clock", icon: Clock },
+  { bit: 1, label: "Pomodoro", icon: Timer },
+  { bit: 2, label: "Kubi's World", icon: Smile },
+  { bit: 3, label: "Glow", icon: Sparkles },
+  { bit: 4, label: "Maze", icon: Gamepad2 },
+];
+
+// Minutes after midnight <-> "HH:MM" for <input type="time">
+function minutesToTime(m: number): string {
+  const h = Math.floor(m / 60) % 24;
+  return `${String(h).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+}
+function timeToMinutes(t: string): number | null {
+  const match = /^(\d{1,2}):(\d{2})/.exec(t);
+  if (!match) return null;
+  const h = Number(match[1]);
+  const m = Number(match[2]);
+  return h < 24 && m < 60 ? h * 60 + m : null;
+}
+
 function batteryLine(d: { batteryState?: string; batteryMinutes?: number }): string {
   const mins = d.batteryMinutes ?? -1;
   if (d.batteryState === "disconnected") return "Battery cut off - plug in the USB-C charger";
-  if (d.batteryState === "checking") return "Just started, checking for the charger...";
+  // After a restart Kubi watches the voltage trend for up to 30 min (no charger signal yet: Revision 2 notes)
+  if (d.batteryState === "checking") return "Checking if I'm charging...";
   if (d.batteryState === "full") return "Full - you can unplug";
   if (d.batteryState === "charging") return mins >= 0 ? `Charging, full in ~${formatDuration(mins)}` : "Charging, estimating...";
   return mins >= 0 ? `~${formatDuration(mins)} left` : "On battery, estimating...";
@@ -224,6 +261,8 @@ function KubiDashboard() {
   const shortSlider = useSliderDraft(pomoNow.shortBreakMin, (v) => mutation.mutate({ shortBreakMin: v }));
   const longSlider = useSliderDraft(pomoNow.longBreakMin, (v) => mutation.mutate({ longBreakMin: v }));
   const cyclesSlider = useSliderDraft(pomoNow.cycleTarget, (v) => mutation.mutate({ cycleTarget: v }));
+  // Night brightness: Kubi previews a new level for 30 s so it can be judged
+  const nightLevelSlider = useSliderDraft(data.nightLevel ?? 4, (v) => mutation.mutate({ nightLevel: v }));
 
   // Charge reminders: 0 = off. An off reminder's slider rests at a suggested
   // level and stays draggable: dragging it turns the reminder on.
@@ -350,6 +389,29 @@ function KubiDashboard() {
       toast.error("Kubi did not accept the reset");
     },
   });
+
+  // 5. Maze progress reset (two-step, like the factory reset)
+  const [mazeResetArmed, setMazeResetArmed] = useState(false);
+  const mazeResetMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/maze/reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: true }),
+      });
+      if (!res.ok) throw new Error("Reset refused");
+      return res.json();
+    },
+    onSuccess: () => {
+      setMazeResetArmed(false);
+      qc.invalidateQueries({ queryKey: ["kubiState"] });
+      toast.success("Maze reset: back to board 1, best times cleared");
+    },
+    onError: () => toast.error("Kubi did not accept the reset"),
+  });
+
+  const nightFaceMask = data.nightFaces ?? 1;
+  const nightOn = data.nightOn ?? true;
 
   const pomo = data.pomodoro || DEFAULT_STATE.pomodoro;
 
@@ -570,8 +632,8 @@ function KubiDashboard() {
       bodyContent: (
         <div className="space-y-4 text-sm">
           <p className="text-xs text-zinc-500 leading-relaxed">
-            Kubi chimes and shows a note when it is time to unplug or plug in (from 10 pm to 7 am just the note, no
-            chime). Tap Kubi to dismiss it. The charger itself always fills the battery; this only reminds you.
+            Kubi chimes and shows a note when it is time to unplug or plug in (during the night hours, set under Night
+            Mode, just the note, no chime). Tap Kubi to dismiss it. The charger itself always fills the battery; this only reminds you.
           </p>
           {[
             { label: "Remind me to unplug at", slider: alertHighSlider, saved: data.chargeAlertHigh ?? 0, min: 50, max: 100, key: "chargeAlertHigh" },
@@ -668,6 +730,171 @@ function KubiDashboard() {
           </div>
           {data.isSleeping && (
             <p className="text-xs text-zinc-500">Kubi's screen is asleep right now.</p>
+          )}
+        </div>
+      ),
+    },
+    // NIGHT MODE ITEM
+    {
+      headerContent: (
+        <div className="flex items-center gap-3 font-medium text-zinc-100">
+          <MoonStar size={18} className="text-amber-500" /> Night Mode
+          {data.isNight && (
+            <span className="text-[10px] font-mono uppercase tracking-wider text-amber-500/80 bg-amber-500/10 px-2 py-0.5 rounded-md">
+              {data.nightPreview ? "preview" : "on now"}
+            </span>
+          )}
+        </div>
+      ),
+      bodyContent: (
+        <div className="space-y-5 text-sm">
+          <p className="text-xs text-zinc-500 leading-relaxed">
+            During these hours only the faces you pick stay on, with the screen turned right down (the clock goes
+            red). Any other face goes dark; tap Kubi to peek at it for 10 seconds. Battery reminders stay quiet in
+            these hours too.
+          </p>
+
+          <div className="flex justify-between items-center">
+            <span className="text-zinc-300 font-medium text-xs">Night mode</span>
+            <button
+              onClick={() => mutation.mutate({ nightOn: !nightOn })}
+              aria-label={nightOn ? "Turn night mode off" : "Turn night mode on"}
+              className={`shrink-0 px-2.5 py-1 rounded-md text-xs font-mono cursor-pointer ${
+                nightOn ? "bg-amber-500/10 text-amber-500" : "bg-zinc-800 text-zinc-500"
+              }`}
+            >
+              {nightOn ? "On" : "Off"}
+            </button>
+          </div>
+
+          <div className={`grid grid-cols-2 gap-3 ${nightOn ? "" : "opacity-60"}`}>
+            {(
+              [
+                { key: "nightFrom", label: "From", value: data.nightFrom ?? 23 * 60 },
+                { key: "nightTo", label: "Until", value: data.nightTo ?? 6 * 60 + 30 },
+              ] as const
+            ).map((t) => (
+              <label key={t.key} className="space-y-1.5 block">
+                <span className="text-xs text-zinc-400">{t.label}</span>
+                <input
+                  type="time"
+                  value={minutesToTime(t.value)}
+                  onChange={(e) => {
+                    const m = timeToMinutes(e.target.value);
+                    if (m !== null && m !== t.value) mutation.mutate({ [t.key]: m });
+                  }}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 font-mono text-zinc-200 [color-scheme:dark]"
+                />
+              </label>
+            ))}
+          </div>
+
+          <div className="space-y-2">
+            <span className="text-xs text-zinc-400 block">Faces that stay on at night</span>
+            <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+              {NIGHT_FACE_OPTIONS.map((f) => {
+                const on = (nightFaceMask & (1 << f.bit)) !== 0;
+                const Icon = f.icon;
+                return (
+                  <button
+                    key={f.bit}
+                    onClick={() => mutation.mutate({ nightFaces: nightFaceMask ^ (1 << f.bit) })}
+                    aria-pressed={on}
+                    className={`flex flex-col items-center gap-1 py-2.5 rounded-xl text-[11px] font-medium border transition-colors cursor-pointer ${
+                      on
+                        ? "bg-amber-500/10 border-amber-500/50 text-amber-500"
+                        : "bg-zinc-950 border-zinc-800 text-zinc-500 hover:text-zinc-300 hover:border-zinc-700"
+                    }`}
+                  >
+                    <Icon size={16} />
+                    {f.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="flex justify-between text-xs">
+              <span className="text-zinc-300 font-medium">Night brightness</span>
+              <span className="font-mono text-amber-500">
+                {nightLevelSlider.value} / {data.nightLevels ?? 10}
+              </span>
+            </div>
+            <input
+              type="range"
+              min={1}
+              max={data.nightLevels ?? 10}
+              step={1}
+              aria-label="Night brightness"
+              {...nightLevelSlider.input}
+              className="kubi-range"
+            />
+            <p className="text-[11px] text-zinc-500">1 is the faintest glow. Kubi shows a new level for 30 seconds.</p>
+          </div>
+
+          <button
+            onClick={() => mutation.mutate({ nightPreview: !data.nightPreview })}
+            className="w-full py-2.5 rounded-xl text-xs font-medium bg-zinc-950 hover:bg-zinc-900 text-zinc-300 border border-zinc-800 hover:border-zinc-700 transition-colors cursor-pointer"
+          >
+            {data.nightPreview ? "Stop the preview" : "Preview night for 30 seconds"}
+          </button>
+        </div>
+      ),
+    },
+    // MAZE ITEM
+    {
+      headerContent: (
+        <div className="flex items-center gap-3 font-medium text-zinc-100">
+          <Gamepad2 size={18} className="text-amber-500" /> Maze
+        </div>
+      ),
+      bodyContent: (
+        <div className="space-y-4 text-sm">
+          <p className="text-xs text-zinc-500 leading-relaxed">
+            Lay Kubi on his back, screen to the sky, and tilt him to roll the ball to the gold square. Each finished
+            board unlocks the next.
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800/50">
+              <span className="text-zinc-500 text-xs block mb-1">BOARD</span>
+              <span className="font-mono text-zinc-200">
+                {data.mazeBoard ?? 1} <span className="text-zinc-500">of {data.mazeCount ?? "-"}</span>
+              </span>
+            </div>
+            <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800/50">
+              <span className="text-zinc-500 text-xs block mb-1">BEST TIMES</span>
+              <span className="font-mono text-zinc-200">{data.mazeSolved ?? 0}</span>
+            </div>
+          </div>
+          {!mazeResetArmed ? (
+            <button
+              onClick={() => setMazeResetArmed(true)}
+              className="w-full py-2.5 rounded-xl text-xs font-medium bg-zinc-950 hover:bg-zinc-900 text-zinc-300 border border-zinc-800 hover:border-zinc-700 transition-colors cursor-pointer"
+            >
+              Reset maze progress...
+            </button>
+          ) : (
+            <div className="space-y-3 p-4 rounded-2xl bg-amber-500/5 border border-amber-500/30">
+              <p className="text-xs text-amber-100/80 leading-relaxed">
+                Back to board 1, and every best time is forgotten. Your settings stay as they are.
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => setMazeResetArmed(false)}
+                  className="py-2.5 rounded-xl text-xs font-medium bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-700 transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => mazeResetMutation.mutate()}
+                  disabled={mazeResetMutation.isPending}
+                  className="py-2.5 rounded-xl text-xs font-semibold bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 border border-amber-500/40 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  {mazeResetMutation.isPending ? "Resetting..." : "Reset the maze"}
+                </button>
+              </div>
+            </div>
           )}
         </div>
       ),

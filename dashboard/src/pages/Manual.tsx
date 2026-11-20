@@ -235,7 +235,7 @@ function Manual() {
           <p>
             Get the ball to the gold checkered square without falling in any of the holes. A hole sends you back to the
             start, and the clock keeps running. <Aside>Brutal, I know.</Aside> Finish and I'll show your time and your
-            best, then load the next maze. There are ten.
+            best, then load the next maze. There are fifty, and they get mean.
           </p>
           <p>
             The maze faces whoever tipped me back, so it always reads the right way round for you. While you're playing
@@ -244,6 +244,32 @@ function Manual() {
           </p>
           <Axel>This is my time to shine. Literally everything in this game is me.</Axel>
           <p>Lying face down does nothing, by the way. I just keep showing whatever I was showing.</p>
+        </section>
+
+        <section>
+          <h1>Night Mode</h1>
+          <p>
+            Even desk buddies need their beauty sleep. From 11 at night until half past six in the morning I go into
+            night mode.
+          </p>
+          <p>
+            Only the clock stays on, in a deep red with my screen turned right down, so you can check the time at 3 am
+            without lighting up the whole room. Every other face goes dark.
+          </p>
+          <p>
+            Want to see a dark face anyway? <strong>Tap</strong> me and I'll show it for 10 seconds. Roll me onto
+            another face and I'll show that one for 10 seconds too, then lights out again.
+          </p>
+          <p>
+            "Can you switch the backlight off and just show the numbers?" Mathys asked that too. Sadly no: my screen
+            is an LCD, and without its backlight it shows nothing at all. So I do the next best thing: red digits,
+            with the backlight as low as it goes. <Aside>Physics. Can't argue with it.</Aside>
+          </p>
+          <p>
+            All of it is yours to change in the app: the hours, which faces stay on, and how bright my night glow is.
+            There's even a button to preview night mode in broad daylight.
+          </p>
+          <Axel>Battery reminders keep quiet during night hours too. You're welcome.</Axel>
         </section>
 
         <section>
@@ -293,8 +319,8 @@ function Manual() {
             low. I'll chime and show a note. Tap me to make it go away.
           </p>
           <p>
-            Between 10 at night and 7 in the morning I still show the note, but I keep my mouth shut. I learned that one
-            the hard way.
+            During night hours (11 pm to 6:30 am, unless you change them) I still show the note, but I keep my mouth
+            shut. I learned that one the hard way.
           </p>
 
           <h2>Running on Empty</h2>
@@ -340,7 +366,19 @@ function Manual() {
           <h2>Screen Sleep</h2>
           <p>
             How long I wait before my screen naps on the faces that do that (my scenes and the maze). The clock, the
-            timer and the glow stay on.
+            timer and the glow stay on (except at night, see Night Mode).
+          </p>
+
+          <h2>Night Mode</h2>
+          <p>
+            When night starts and ends, which faces stay on, and how bright I glow (1 is barely there). Changing the
+            brightness shows it for 30 seconds, and there's a button to preview the whole thing.
+          </p>
+
+          <h2>Maze</h2>
+          <p>
+            Which board you're on and how many you've got a best time for. "Reset maze progress" sends you back to
+            board 1 and forgets every best time, in case someone else wants a go from the start.
           </p>
 
           <h2>Sound</h2>
@@ -389,12 +427,12 @@ function Manual() {
         <section>
           <h1>Stats for Nerds</h1>
           <p>Started: 4 September 2026</p>
-          <p>Commits: 95 and counting</p>
+          <p>Commits: 97 and counting</p>
           <hr />
-          <p>Lines of code (Firmware): 4,522 lines</p>
-          <p>Lines of code (App): 2,932 lines</p>
-          <p>Lines of code (Simulator): 1,928 lines</p>
-          <p className="font-bold">Grand Total Lines: 9,382 lines</p>
+          <p>Lines of code (Firmware): 5,512 lines</p>
+          <p>Lines of code (App): 3,520 lines</p>
+          <p>Lines of code (Simulator): 2,454 lines</p>
+          <p className="font-bold">Grand Total Lines: 11,486 lines</p>
           <hr />
           <p>
             Yes, a simulator. Mathys built a digital twin of me on his PC, so he could test me without picking me up a
@@ -405,6 +443,7 @@ function Manual() {
             Money spent:{" "}
             <Bleep title="*priceless*">Priceless</Bleep>
           </p>
+          <p>Maze boards: 50, every one proven solvable by a robot before you got them</p>
           <p>Amount of effort: Worth every second</p>
         </section>
 
@@ -416,6 +455,7 @@ function Manual() {
             <li>A power switch (so I can actually be switched off)</li>
             <li>Smarter power circuitry, so a charge lasts a lot longer</li>
             <li>Switching my speaker amp off between chimes, for even more battery</li>
+            <li>A wire to my charger, so I know the moment I'm plugged in instead of working it out</li>
           </ol>
         </section>
 
