@@ -1819,7 +1819,13 @@ void WiFiManager::handleWifiSave() {
     _ssid = WiFi_SSID(true); // password change, placeholder ssid, @todo compare pass to old?, confirm ssid is clean
     #ifdef WM_DEBUG_LEVEL
     DEBUG_WM(WM_DEBUG_VERBOSE,F("Detected WiFi password change"));
-    #endif    
+    #endif
+  }
+
+  // Kubi: the portal never sends saved passwords to the browser. A blank
+  // password for a network the device already knows means "reuse it".
+  if(_pass == "" && _ssid != "" && _savedpasswordresolver != NULL){
+    _pass = _savedpasswordresolver(_ssid);
   }
 
   #ifdef WM_DEBUG_LEVEL
@@ -2838,6 +2844,11 @@ void WiFiManager::setSaveConfigCallback( std::function<void()> func ) {
  */
 void WiFiManager::setPreSaveConfigCallback( std::function<void()> func ) {
   _presavewificallback = func;
+}
+
+// Kubi: resolves a saved password on the device when the portal submits a blank one
+void WiFiManager::setSavedPasswordResolver( std::function<String(const String&)> func ) {
+  _savedpasswordresolver = func;
 }
 
 /**

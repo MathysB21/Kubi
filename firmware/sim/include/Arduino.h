@@ -33,7 +33,15 @@ typedef bool boolean;
 typedef uint8_t byte;
 
 // Millis and Micros
+// Test harnesses can freeze the clock and step it themselves (e.g. replaying a
+// recorded /api/motion-log through SensorManager at its original timing):
+// set simFakeMillis() to a value >= 0. -1 (the default) is the real clock.
+inline long long& simFakeMillis() {
+    static long long fake = -1;
+    return fake;
+}
 inline uint32_t millis() {
+    if (simFakeMillis() >= 0) return (uint32_t)simFakeMillis();
     static auto start = std::chrono::steady_clock::now();
     auto now = std::chrono::steady_clock::now();
     return (uint32_t)std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count();
@@ -174,8 +182,11 @@ extern SimSerial Serial;
 extern uint8_t sim_backlight_value;
 inline void ledcSetup(uint8_t channel, uint32_t freq, uint8_t res) {}
 inline void ledcAttachPin(uint8_t pin, uint8_t channel) {}
-inline void ledcWrite(uint8_t channel, uint8_t value) {
-    sim_backlight_value = value;
+// The firmware drives the backlight at 12 bits (DisplayManager PWM_RES);
+// the sim reports it on the old 0-255 scale, never 0 while it is lit at all.
+inline void ledcWrite(uint8_t channel, uint32_t duty) {
+    uint32_t v = duty * 255 / 4095;
+    sim_backlight_value = (uint8_t)(duty > 0 && v == 0 ? 1 : v);
 }
 
 // Simulated Time

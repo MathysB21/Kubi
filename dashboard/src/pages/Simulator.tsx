@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from "react";
 import { Link } from "react-router";
+import { TiltPad } from "../components/TiltPad";
 import {
   Clock,
   Timer,
   Smile,
-  Calendar,
+  Sparkles,
   Volume2,
   VolumeX,
   RotateCw,
@@ -19,7 +20,6 @@ import {
   Compass,
   Sun,
   Cake,
-  Sparkles,
   Flower2,
   Music,
   Coffee,
@@ -27,6 +27,7 @@ import {
   Sunset,
   Laptop,
   Dumbbell,
+  Gamepad2,
 } from "lucide-react";
 import { playSimChime } from "../lib/audioChimes";
 import KubiDashboardApp from "../App";
@@ -221,7 +222,8 @@ export default function Simulator() {
   // Face change
   const setFace = (faceIdx: number) => {
     setActiveFace(faceIdx);
-    setSimState((prev) => (prev ? { ...prev, rotation: faceIdx, mode: faceIdx } : null));
+    // Screen up (4) keeps the last upright face's rotation: the firmware reports it
+    setSimState((prev) => (prev ? { ...prev, rotation: faceIdx === 4 ? prev.rotation : faceIdx, mode: faceIdx } : null));
     inject({ face: faceIdx });
   };
 
@@ -436,7 +438,7 @@ export default function Simulator() {
                   </span>
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                   {[
                     {
                       id: 0,
@@ -462,9 +464,16 @@ export default function Simulator() {
                     {
                       id: 3,
                       title: "Face 4 UP",
-                      mode: "3-Day Schedule",
-                      desc: "Google Calendar agenda",
-                      icon: Calendar,
+                      mode: "Ambient Glow",
+                      desc: "Slow colour glow for a dark room",
+                      icon: Sparkles,
+                    },
+                    {
+                      id: 4,
+                      title: "Screen UP",
+                      mode: "Tilt Maze",
+                      desc: "On his back; faces the last upright face's viewer",
+                      icon: Gamepad2,
                     },
                   ].map((face) => {
                     const Icon = face.icon;
@@ -592,6 +601,22 @@ export default function Simulator() {
                       </div>
                     </div>
                   </button>
+                </div>
+              </section>
+
+              {/* 2b. CONTINUOUS TILT (MAZE) */}
+              <section className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold tracking-wide uppercase text-zinc-300 flex items-center gap-2">
+                    <RotateCw className="w-4 h-4 text-amber-500" />
+                    Continuous Tilt
+                  </h3>
+                  <span className="text-xs text-zinc-400">
+                    Relative to the current face at rest (on his back: pitch + = top edge down)
+                  </span>
+                </div>
+                <div className="p-4 rounded-xl bg-zinc-900/60 border border-zinc-800">
+                  <TiltPad send={(t) => inject({ tiltRoll: t.roll, tiltPitch: t.pitch })} />
                 </div>
               </section>
 

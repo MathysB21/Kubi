@@ -1,5 +1,10 @@
 # Name,   Type, SubType, Offset,  Size, Flags
+# Two app slots so WiFi (OTA) updates have somewhere to write: the running
+# slot cannot be overwritten. firmware.bin is ~1.37 MB, data/ is ~535 KB.
+# coredump holds the last crash (decode steps in AGENTS.md).
 nvs,      data, nvs,     0x9000,  0x5000,
 otadata,  data, ota,     0xe000,  0x2000,
-app0,     app,  ota_0,   0x10000, 0x200000,
-spiffs,   data, spiffs,  0x210000,0x1E0000,
+app0,     app,  ota_0,   0x10000, 0x180000,
+app1,     app,  ota_1,   0x190000,0x180000,
+spiffs,   data, spiffs,  0x310000,0xE0000,
+coredump, data, coredump,0x3F0000,0x10000,

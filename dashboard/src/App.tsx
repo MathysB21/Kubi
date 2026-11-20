@@ -2,9 +2,10 @@ import {
   Clock,
   Timer,
   Smile,
-  Calendar,
+  Sparkles,
   Activity,
   RefreshCw,
+  TriangleAlert,
   Wifi,
   Battery,
   Thermometer,
@@ -14,10 +15,26 @@ import {
   SkipForward,
   RotateCcw,
   Sliders,
+  Moon,
+  MoonStar,
+  WifiOff,
   Palette,
-  Upload,
-  Trash2,
-  FileText,
+  Volume2,
+  VolumeX,
+  Sun,
+  Flower2,
+  Music,
+  Coffee,
+  Sunset,
+  Laptop,
+  Dumbbell,
+  Gauge,
+  BatteryCharging,
+  BatteryFull,
+  PlugZap,
+  Image,
+  Power,
+  Gamepad2,
 } from "lucide-react";
 import { Accordion } from "./components/Accordion";
 import {
@@ -28,8 +45,10 @@ import {
   QueryClientProvider,
 } from "@tanstack/react-query";
 import { Toaster, toast } from "sonner";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { SpinningCube } from "./components/SpinningCube";
+import { CreatorPanel } from "./components/CreatorPanel";
+import { useSliderDraft } from "./lib/useSliderDraft";
 import { Link } from "react-router";
 
 // Detailed Pomodoro state
@@ -56,19 +75,31 @@ interface KubiState {
   mode: number;
   temp: number;
   battery: number;
-  icalUrl: string;
-  hasIcs?: boolean;
-  hasEvents?: boolean;
-  scheduleDay?: string;
-  isNightMode: boolean;
-  planetDawnH: number;
-  planetDawnM: number;
-  planetDuskH: number;
-  planetDuskM: number;
-  alarmHour: number;
-  alarmMinute: number;
-  cfgSundownHour: number;
-  cfgSundownMinute: number;
+  sleepTimeoutMin?: number;
+  volume?: number; // chime volume, 0-100
+  isSleeping?: boolean;
+  batteryVoltage?: number;
+  batteryState?: "draining" | "charging" | "full" | "disconnected" | "checking";
+  batteryMinutes?: number; // to empty or to full, -1 = still estimating
+  pressure?: number; // hPa
+  chargeAlertHigh?: number; // 0 = off
+  chargeAlertLow?: number; // 0 = off
+  mascotScene?: number;
+  mascotPreview?: boolean; // true while a scene picked here is showing
+  mascotPreviewLeftMin?: number; // minutes left on that preview
+  // Night mode (firmware NightMode.h); times are minutes after midnight
+  nightOn?: boolean;
+  nightFrom?: number;
+  nightTo?: number;
+  nightFaces?: number; // bit per face mode: 0 clock, 1 Pomodoro, 2 mascot, 3 ambient, 4 maze
+  nightLevel?: number; // 1 (faintest) .. nightLevels
+  nightLevels?: number;
+  isNight?: boolean;
+  nightPreview?: boolean;
+  // Maze progress
+  mazeBoard?: number; // 1-based board he is on
+  mazeCount?: number;
+  mazeSolved?: number; // boards with a best time
   pomodoro: PomodoroState;
   [key: string]: any;
 }
@@ -77,16 +108,6 @@ const DEFAULT_STATE: KubiState = {
   mode: 0,
   temp: 22.0,
   battery: 100,
-  icalUrl: "",
-  isNightMode: false,
-  planetDawnH: 6,
-  planetDawnM: 0,
-  planetDuskH: 18,
-  planetDuskM: 0,
-  alarmHour: 8,
-  alarmMinute: 0,
-  cfgSundownHour: 18,
-  cfgSundownMinute: 0,
   pomodoro: {
     phase: 0,
     phaseName: "FOCUS",
@@ -110,7 +131,73 @@ const FACE_MODES = [
   { id: 0, name: "Face 1: Focus Clock", desc: "Minimal digital & analog clock with date", icon: Clock },
   { id: 1, name: "Face 2: Pomodoro", desc: "Auto focus timer with 8-bit chimes", icon: Timer },
   { id: 2, name: "Face 3: Mascot & Temp", desc: "Kubi routine & room telemetry", icon: Smile },
-  { id: 3, name: "Face 4: Schedule", desc: "3-day Google Calendar agenda", icon: Calendar },
+  { id: 3, name: "Face 4: Ambient", desc: "Slow colour glow for a dark room", icon: Sparkles },
+];
+// Lying on its back, screen to the sky. Not in the selector: only lying
+// Kubi down opens it.
+const MAZE_MODE = { id: 4, name: "Screen up: Tilt Maze", desc: "Lay Kubi on his back and tilt", icon: Gamepad2 };
+
+// Minutes of inactivity before the Mascot face turns its screen off (0 = never)
+// The Mascot face's scenes, by firmware index. Birthday (1) and Christmas (2)
+// are left out on purpose: they only turn up on their day.
+const SCENES = [
+  { id: 0, title: "Beach", icon: Sun },
+  { id: 3, title: "Flower field", icon: Flower2 },
+  { id: 4, title: "Music", icon: Music },
+  { id: 5, title: "Cafe", icon: Coffee },
+  { id: 6, title: "Bedtime", icon: Moon },
+  { id: 7, title: "Sunset", icon: Sunset },
+  { id: 8, title: "Working", icon: Laptop },
+  { id: 9, title: "Gym", icon: Dumbbell },
+];
+
+function formatDuration(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (h === 0) return `${m} min`;
+  return m === 0 ? `${h} h` : `${h} h ${m} min`;
+}
+
+// Night mode: which faces may stay on (bit = face mode id)
+const NIGHT_FACE_OPTIONS = [
+  { bit: 0, label: "Clock", icon: Clock },
+  { bit: 1, label: "Pomodoro", icon: Timer },
+  { bit: 2, label: "Kubi's World", icon: Smile },
+  { bit: 3, label: "Glow", icon: Sparkles },
+  { bit: 4, label: "Maze", icon: Gamepad2 },
+];
+
+// Minutes after midnight <-> "HH:MM" for <input type="time">
+function minutesToTime(m: number): string {
+  const h = Math.floor(m / 60) % 24;
+  return `${String(h).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+}
+function timeToMinutes(t: string): number | null {
+  const match = /^(\d{1,2}):(\d{2})/.exec(t);
+  if (!match) return null;
+  const h = Number(match[1]);
+  const m = Number(match[2]);
+  return h < 24 && m < 60 ? h * 60 + m : null;
+}
+
+function batteryLine(d: { batteryState?: string; batteryMinutes?: number }): string {
+  const mins = d.batteryMinutes ?? -1;
+  if (d.batteryState === "disconnected") return "Battery cut off - plug in the USB-C charger";
+  // After a restart Kubi watches the voltage trend for up to 30 min (no charger signal yet: Revision 2 notes)
+  if (d.batteryState === "checking") return "Checking if I'm charging...";
+  if (d.batteryState === "full") return "Full - you can unplug";
+  if (d.batteryState === "charging") return mins >= 0 ? `Charging, full in ~${formatDuration(mins)}` : "Charging, estimating...";
+  return mins >= 0 ? `~${formatDuration(mins)} left` : "On battery, estimating...";
+}
+
+const SLEEP_OPTIONS = [
+  { min: 0, label: "Never" },
+  { min: 1, label: "1 min" },
+  { min: 2, label: "2 min" },
+  { min: 5, label: "5 min" },
+  { min: 10, label: "10 min" },
+  { min: 15, label: "15 min" },
+  { min: 30, label: "30 min" },
 ];
 
 const PRESET_COLORS = [
@@ -134,29 +221,110 @@ function formatTime(totalSecs: number) {
 
 function KubiDashboard() {
   const qc = useQueryClient();
-  const [icalInput, setIcalInput] = useState("");
 
-  // 1. Fetch system state
-  const { data = DEFAULT_STATE, isLoading } = useQuery<KubiState>({
+  // 1. Fetch system state. Failures throw so the UI can show that Kubi is
+  // unreachable instead of rendering plausible-looking defaults.
+  const {
+    data: liveData,
+    isLoading,
+    isError,
+    dataUpdatedAt,
+    refetch,
+  } = useQuery<KubiState>({
     queryKey: ["kubiState"],
     queryFn: async () => {
-      try {
-        const res = await fetch("/api/state");
-        if (!res.ok) return DEFAULT_STATE;
-        const json = await res.json();
-        return {
-          ...DEFAULT_STATE,
-          ...json,
-          pomodoro: {
-            ...DEFAULT_STATE.pomodoro,
-            ...(json.pomodoro || {}),
-          },
-        };
-      } catch {
-        return DEFAULT_STATE;
-      }
+      const res = await fetch("/api/state");
+      if (!res.ok) throw new Error(`Kubi responded ${res.status}`);
+      const json = await res.json();
+      return {
+        ...DEFAULT_STATE,
+        ...json,
+        pomodoro: {
+          ...DEFAULT_STATE.pomodoro,
+          ...(json.pomodoro || {}),
+        },
+      };
     },
+    retry: 1,
     refetchInterval: 1000, // 1Hz live polling for smooth timer sync
+  });
+  // Only ever real data past the connection gate below
+  const data = liveData ?? DEFAULT_STATE;
+  const isStale = isError && liveData !== undefined;
+
+  // Sliders: each shows the dragged value and sends one save when it goes
+  // still or is let go (useSliderDraft). Volume plays a chime per save.
+  const volumeSlider = useSliderDraft(data.volume ?? 25, (v) => mutation.mutate({ volume: v }));
+  const volume = volumeSlider.value;
+  const pomoNow = data.pomodoro || DEFAULT_STATE.pomodoro;
+  const focusSlider = useSliderDraft(pomoNow.focusMin, (v) => mutation.mutate({ focusMin: v }));
+  const shortSlider = useSliderDraft(pomoNow.shortBreakMin, (v) => mutation.mutate({ shortBreakMin: v }));
+  const longSlider = useSliderDraft(pomoNow.longBreakMin, (v) => mutation.mutate({ longBreakMin: v }));
+  const cyclesSlider = useSliderDraft(pomoNow.cycleTarget, (v) => mutation.mutate({ cycleTarget: v }));
+  // Night brightness: Kubi previews a new level for 30 s so it can be judged
+  const nightLevelSlider = useSliderDraft(data.nightLevel ?? 4, (v) => mutation.mutate({ nightLevel: v }));
+
+  // Charge reminders: 0 = off. An off reminder's slider rests at a suggested
+  // level and stays draggable: dragging it turns the reminder on.
+  const ALERT_DEFAULT_HIGH = 80;
+  const ALERT_DEFAULT_LOW = 20;
+  const alertHighSlider = useSliderDraft(
+    (data.chargeAlertHigh ?? 0) > 0 ? data.chargeAlertHigh! : ALERT_DEFAULT_HIGH,
+    (v) => mutation.mutate({ chargeAlertHigh: v })
+  );
+  const alertLowSlider = useSliderDraft(
+    (data.chargeAlertLow ?? 0) > 0 ? data.chargeAlertLow! : ALERT_DEFAULT_LOW,
+    (v) => mutation.mutate({ chargeAlertLow: v })
+  );
+
+  // Creator panel (the brother's backdoor): five taps on the title within 3 s
+  // open or hide it. Remembered in this browser only; storage can be blocked.
+  const [creatorOpen, setCreatorOpen] = useState(() => {
+    try {
+      return localStorage.getItem("kubi.creator") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [titleTaps, setTitleTaps] = useState<number[]>([]);
+  const setCreator = (open: boolean) => {
+    setCreatorOpen(open);
+    try {
+      if (open) localStorage.setItem("kubi.creator", "1");
+      else localStorage.removeItem("kubi.creator");
+    } catch {
+      /* per-browser convenience only */
+    }
+  };
+  const onTitleTap = () => {
+    const now = Date.now();
+    const taps = [...titleTaps.filter((t) => now - t < 3000), now];
+    if (taps.length >= 5) {
+      setTitleTaps([]);
+      setCreator(!creatorOpen);
+    } else {
+      setTitleTaps(taps);
+    }
+  };
+
+  // Nap: Kubi goes dark and offline until picked up. Two taps so it cannot happen by accident.
+  const [napArmed, setNapArmed] = useState(false);
+  useEffect(() => {
+    if (!napArmed) return;
+    const t = setTimeout(() => setNapArmed(false), 5000);
+    return () => clearTimeout(t);
+  }, [napArmed]);
+  const napMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/nap", { method: "POST" });
+      if (!res.ok) throw new Error("Nap failed");
+      return res.json();
+    },
+    onSuccess: () => {
+      setNapArmed(false);
+      toast.success("Good night, Kubi. Pick him up to wake him.", { duration: 8000 });
+    },
+    onError: () => toast.error("Could not reach Kubi"),
   });
 
   // 2. Settings mutation
@@ -198,74 +366,53 @@ function KubiDashboard() {
     },
   });
 
-  const handleUploadIcs = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const text = reader.result as string;
-      try {
-        const res = await fetch("/api/calendar/ics", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ics: text }),
-        });
-        if (res.ok) {
-          qc.invalidateQueries({ queryKey: ["kubiState"] });
-          toast.success("ICS calendar uploaded & parsed!");
-        } else {
-          toast.error("Failed to parse ICS file");
-        }
-      } catch {
-        toast.error("Could not upload ICS file");
-      }
-    };
-    reader.readAsText(file);
-    e.target.value = "";
-  };
-
-  const handleLoadSample = async () => {
-    try {
-      const res = await fetch("/api/calendar/sample", { method: "POST" });
-      if (res.ok) {
-        qc.invalidateQueries({ queryKey: ["kubiState"] });
-        toast.success("Rich sample schedule loaded (>4 items, ticker)!");
-      }
-    } catch {
-      toast.error("Could not load sample schedule");
-    }
-  };
-
-  const handleClearCalendar = async () => {
-    try {
-      const res = await fetch("/api/calendar", { method: "DELETE" });
-      if (res.ok) {
-        setIcalInput("");
-        qc.invalidateQueries({ queryKey: ["kubiState"] });
-        toast.success("Calendar cleared ('No calendar connected, that's sad')");
-      }
-    } catch {
-      toast.error("Could not clear calendar");
-    }
-  };
-
-  const handleEmptyCalendar = async () => {
-    try {
-      const res = await fetch("/api/calendar/ics", {
+  const activeFace = data.mode === MAZE_MODE.id ? MAZE_MODE : FACE_MODES[data.mode] || FACE_MODES[0];
+  // 4. Factory reset (two-step: the button only arms the confirm panel)
+  const [resetArmed, setResetArmed] = useState(false);
+  const factoryResetMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/factory-reset", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ics: "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR" }),
+        body: JSON.stringify({ confirm: "ERASE" }),
       });
-      if (res.ok) {
-        qc.invalidateQueries({ queryKey: ["kubiState"] });
-        toast.success("Empty calendar set ('Nothing happening, I guess')");
-      }
-    } catch {
-      toast.error("Could not set empty calendar");
-    }
-  };
+      if (!res.ok) throw new Error("Reset refused");
+      return res.json();
+    },
+    onSuccess: () => {
+      setResetArmed(false);
+      toast.success("Kubi is erasing everything and restarting. Join the Kubi-Setup WiFi to set it up again.", {
+        duration: 15000,
+      });
+    },
+    onError: () => {
+      toast.error("Kubi did not accept the reset");
+    },
+  });
 
-  const activeFace = FACE_MODES[data.mode] || FACE_MODES[0];
+  // 5. Maze progress reset (two-step, like the factory reset)
+  const [mazeResetArmed, setMazeResetArmed] = useState(false);
+  const mazeResetMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/maze/reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: true }),
+      });
+      if (!res.ok) throw new Error("Reset refused");
+      return res.json();
+    },
+    onSuccess: () => {
+      setMazeResetArmed(false);
+      qc.invalidateQueries({ queryKey: ["kubiState"] });
+      toast.success("Maze reset: back to board 1, best times cleared");
+    },
+    onError: () => toast.error("Kubi did not accept the reset"),
+  });
+
+  const nightFaceMask = data.nightFaces ?? 1;
+  const nightOn = data.nightOn ?? true;
+
   const pomo = data.pomodoro || DEFAULT_STATE.pomodoro;
 
   // Resolve current active color for Pomodoro
@@ -292,60 +439,60 @@ function KubiDashboard() {
             <div className="space-y-1.5">
               <div className="flex justify-between text-xs">
                 <span className="text-zinc-300 font-medium">Work / Focus Duration</span>
-                <span className="font-mono text-amber-500">{pomo.focusMin} mins</span>
+                <span className="font-mono text-amber-500">{focusSlider.value} mins</span>
               </div>
               <input
                 type="range"
                 min="1"
                 max="90"
-                value={pomo.focusMin}
-                onChange={(e) => mutation.mutate({ focusMin: Number(e.target.value) })}
-                className="w-full h-2 bg-zinc-950 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                {...focusSlider.input}
+                className="kubi-range"
+                style={{ "--range": "#f59e0b" } as React.CSSProperties}
               />
             </div>
 
             <div className="space-y-1.5">
               <div className="flex justify-between text-xs">
                 <span className="text-zinc-300 font-medium">Short Break Duration</span>
-                <span className="font-mono text-emerald-400">{pomo.shortBreakMin} mins</span>
+                <span className="font-mono text-emerald-400">{shortSlider.value} mins</span>
               </div>
               <input
                 type="range"
                 min="1"
                 max="30"
-                value={pomo.shortBreakMin}
-                onChange={(e) => mutation.mutate({ shortBreakMin: Number(e.target.value) })}
-                className="w-full h-2 bg-zinc-950 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                {...shortSlider.input}
+                className="kubi-range"
+                style={{ "--range": "#10b981" } as React.CSSProperties}
               />
             </div>
 
             <div className="space-y-1.5">
               <div className="flex justify-between text-xs">
                 <span className="text-zinc-300 font-medium">Long Break Duration</span>
-                <span className="font-mono text-sky-400">{pomo.longBreakMin} mins</span>
+                <span className="font-mono text-sky-400">{longSlider.value} mins</span>
               </div>
               <input
                 type="range"
                 min="5"
                 max="60"
-                value={pomo.longBreakMin}
-                onChange={(e) => mutation.mutate({ longBreakMin: Number(e.target.value) })}
-                className="w-full h-2 bg-zinc-950 rounded-lg appearance-none cursor-pointer accent-sky-500"
+                {...longSlider.input}
+                className="kubi-range"
+                style={{ "--range": "#0ea5e9" } as React.CSSProperties}
               />
             </div>
 
             <div className="space-y-1.5">
               <div className="flex justify-between text-xs">
                 <span className="text-zinc-300 font-medium">Sessions Before Long Break</span>
-                <span className="font-mono text-zinc-300">{pomo.cycleTarget} sessions</span>
+                <span className="font-mono text-zinc-300">{cyclesSlider.value} sessions</span>
               </div>
               <input
                 type="range"
                 min="2"
                 max="8"
-                value={pomo.cycleTarget}
-                onChange={(e) => mutation.mutate({ cycleTarget: Number(e.target.value) })}
-                className="w-full h-2 bg-zinc-950 rounded-lg appearance-none cursor-pointer accent-zinc-400"
+                {...cyclesSlider.input}
+                className="kubi-range"
+                style={{ "--range": "#a1a1aa" } as React.CSSProperties}
               />
             </div>
           </div>
@@ -422,6 +569,370 @@ function KubiDashboard() {
         </div>
       ),
     },
+    // SCENES ITEM
+    {
+      headerContent: (
+        <div className="flex items-center gap-3 font-medium text-zinc-100">
+          <Image size={18} className="text-amber-500" /> Kubi's Scenes
+        </div>
+      ),
+      bodyContent: (
+        <div className="space-y-4 text-sm">
+          <p className="text-xs text-zinc-500 leading-relaxed">
+            Kubi picks his own scene on the Mascot face, by the time of day and the day of the week. Pick one here to
+            peek at it for 10 minutes; then Kubi takes over again.
+          </p>
+          <div className="grid grid-cols-4 gap-2">
+            {SCENES.map((scene) => {
+              const Icon = scene.icon;
+              const isActive = data.mascotScene === scene.id;
+              return (
+                <button
+                  key={scene.id}
+                  onClick={() => mutation.mutate({ mascotScene: scene.id })}
+                  className={`flex flex-col items-center gap-1 py-2.5 rounded-xl text-xs font-medium border transition-colors cursor-pointer ${
+                    isActive
+                      ? "bg-amber-500/10 border-amber-500/50 text-amber-500"
+                      : "bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700"
+                  }`}
+                >
+                  <Icon size={16} />
+                  {scene.title}
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-zinc-500">
+              {data.mascotPreview
+                ? "Showing your pick for now."
+                : SCENES.some((sc) => sc.id === data.mascotScene)
+                  ? `Kubi's pick: ${SCENES.find((sc) => sc.id === data.mascotScene)?.title}.`
+                  : "Kubi is up to something special today."}
+            </span>
+            {data.mascotPreview && (
+              <button
+                onClick={() => mutation.mutate({ mascotScene: -1 })}
+                className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg transition-colors cursor-pointer"
+              >
+                Let Kubi choose
+              </button>
+            )}
+          </div>
+        </div>
+      ),
+    },
+    // BATTERY REMINDERS ITEM
+    {
+      headerContent: (
+        <div className="flex items-center gap-3 font-medium text-zinc-100">
+          <PlugZap size={18} className="text-amber-500" /> Battery Reminders
+        </div>
+      ),
+      bodyContent: (
+        <div className="space-y-4 text-sm">
+          <p className="text-xs text-zinc-500 leading-relaxed">
+            Kubi chimes and shows a note when it is time to unplug or plug in (during the night hours, set under Night
+            Mode, just the note, no chime). Tap Kubi to dismiss it. The charger itself always fills the battery; this only reminds you.
+          </p>
+          {[
+            { label: "Remind me to unplug at", slider: alertHighSlider, saved: data.chargeAlertHigh ?? 0, min: 50, max: 100, key: "chargeAlertHigh" },
+            { label: "Remind me to plug in at", slider: alertLowSlider, saved: data.chargeAlertLow ?? 0, min: 5, max: 50, key: "chargeAlertLow" },
+          ].map((r) => {
+            // Dragging an off reminder turns it on at the dragged level
+            const on = r.saved > 0 || r.slider.drafting;
+            return (
+              <div key={r.key} className="space-y-1">
+                <div className="flex justify-between items-center gap-3 text-xs">
+                  <span className="text-zinc-300 font-medium">{r.label}</span>
+                  <button
+                    onClick={() => mutation.mutate({ [r.key]: on ? 0 : r.slider.value })}
+                    className={`shrink-0 px-2.5 py-1 rounded-md font-mono cursor-pointer ${
+                      on ? "bg-amber-500/10 text-amber-500" : "bg-zinc-800 text-zinc-500"
+                    }`}
+                    aria-label={on ? `${r.label}: turn off` : `${r.label}: turn on`}
+                  >
+                    {on ? `${r.slider.value}%` : "Off"}
+                  </button>
+                </div>
+                <input
+                  type="range"
+                  min={r.min}
+                  max={r.max}
+                  step={1}
+                  aria-label={r.label}
+                  {...r.slider.input}
+                  className={`kubi-range ${on ? "" : "opacity-40"}`}
+                />
+              </div>
+            );
+          })}
+        </div>
+      ),
+    },
+    // POWER ITEM
+    {
+      headerContent: (
+        <div className="flex items-center gap-3 font-medium text-zinc-100">
+          <Power size={18} className="text-amber-500" /> Power
+        </div>
+      ),
+      bodyContent: (
+        <div className="space-y-4 text-sm">
+          <p className="text-xs text-zinc-500 leading-relaxed">
+            Put Kubi to sleep when you are away: his screen, sound and WiFi switch off until someone picks him up.
+            He still charges while asleep. A full battery lasts about a week this way; for longer, keep him plugged in.
+          </p>
+          <button
+            onClick={() => (napArmed ? napMutation.mutate() : setNapArmed(true))}
+            disabled={napMutation.isPending}
+            className={`w-full py-2.5 rounded-xl text-sm font-medium border transition-colors cursor-pointer ${
+              napArmed
+                ? "bg-amber-500/15 border-amber-500/60 text-amber-400"
+                : "bg-zinc-950 border-zinc-800 text-zinc-300 hover:text-zinc-100 hover:border-zinc-700"
+            }`}
+          >
+            {napArmed ? "Tap again to put Kubi to sleep" : "Put Kubi to sleep"}
+          </button>
+        </div>
+      ),
+    },
+    // SCREEN SLEEP ITEM
+    {
+      headerContent: (
+        <div className="flex items-center gap-3 font-medium text-zinc-100">
+          <Moon size={18} className="text-amber-500" /> Screen Sleep
+        </div>
+      ),
+      bodyContent: (
+        <div className="space-y-4 text-sm">
+          <p className="text-xs text-zinc-500 leading-relaxed">
+            The Mascot face turns its screen off after this much stillness. Tap or move Kubi to wake it.
+            The Clock and Pomodoro faces stay on.
+          </p>
+          <div className="grid grid-cols-4 gap-2">
+            {SLEEP_OPTIONS.map((opt) => {
+              const isActive = (data.sleepTimeoutMin ?? 5) === opt.min;
+              return (
+                <button
+                  key={opt.min}
+                  onClick={() => mutation.mutate({ sleepTimeoutMin: opt.min })}
+                  className={`py-2 rounded-xl text-xs font-medium border transition-colors cursor-pointer ${
+                    isActive
+                      ? "bg-amber-500/10 border-amber-500/50 text-amber-500"
+                      : "bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+          {data.isSleeping && (
+            <p className="text-xs text-zinc-500">Kubi's screen is asleep right now.</p>
+          )}
+        </div>
+      ),
+    },
+    // NIGHT MODE ITEM
+    {
+      headerContent: (
+        <div className="flex items-center gap-3 font-medium text-zinc-100">
+          <MoonStar size={18} className="text-amber-500" /> Night Mode
+          {data.isNight && (
+            <span className="text-[10px] font-mono uppercase tracking-wider text-amber-500/80 bg-amber-500/10 px-2 py-0.5 rounded-md">
+              {data.nightPreview ? "preview" : "on now"}
+            </span>
+          )}
+        </div>
+      ),
+      bodyContent: (
+        <div className="space-y-5 text-sm">
+          <p className="text-xs text-zinc-500 leading-relaxed">
+            During these hours only the faces you pick stay on, with the screen turned right down (the clock goes
+            red). Any other face goes dark; tap Kubi to peek at it for 10 seconds. Battery reminders stay quiet in
+            these hours too.
+          </p>
+
+          <div className="flex justify-between items-center">
+            <span className="text-zinc-300 font-medium text-xs">Night mode</span>
+            <button
+              onClick={() => mutation.mutate({ nightOn: !nightOn })}
+              aria-label={nightOn ? "Turn night mode off" : "Turn night mode on"}
+              className={`shrink-0 px-2.5 py-1 rounded-md text-xs font-mono cursor-pointer ${
+                nightOn ? "bg-amber-500/10 text-amber-500" : "bg-zinc-800 text-zinc-500"
+              }`}
+            >
+              {nightOn ? "On" : "Off"}
+            </button>
+          </div>
+
+          <div className={`grid grid-cols-2 gap-3 ${nightOn ? "" : "opacity-60"}`}>
+            {(
+              [
+                { key: "nightFrom", label: "From", value: data.nightFrom ?? 23 * 60 },
+                { key: "nightTo", label: "Until", value: data.nightTo ?? 6 * 60 + 30 },
+              ] as const
+            ).map((t) => (
+              <label key={t.key} className="space-y-1.5 block">
+                <span className="text-xs text-zinc-400">{t.label}</span>
+                <input
+                  type="time"
+                  value={minutesToTime(t.value)}
+                  onChange={(e) => {
+                    const m = timeToMinutes(e.target.value);
+                    if (m !== null && m !== t.value) mutation.mutate({ [t.key]: m });
+                  }}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 font-mono text-zinc-200 [color-scheme:dark]"
+                />
+              </label>
+            ))}
+          </div>
+
+          <div className="space-y-2">
+            <span className="text-xs text-zinc-400 block">Faces that stay on at night</span>
+            <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+              {NIGHT_FACE_OPTIONS.map((f) => {
+                const on = (nightFaceMask & (1 << f.bit)) !== 0;
+                const Icon = f.icon;
+                return (
+                  <button
+                    key={f.bit}
+                    onClick={() => mutation.mutate({ nightFaces: nightFaceMask ^ (1 << f.bit) })}
+                    aria-pressed={on}
+                    className={`flex flex-col items-center gap-1 py-2.5 rounded-xl text-[11px] font-medium border transition-colors cursor-pointer ${
+                      on
+                        ? "bg-amber-500/10 border-amber-500/50 text-amber-500"
+                        : "bg-zinc-950 border-zinc-800 text-zinc-500 hover:text-zinc-300 hover:border-zinc-700"
+                    }`}
+                  >
+                    <Icon size={16} />
+                    {f.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="flex justify-between text-xs">
+              <span className="text-zinc-300 font-medium">Night brightness</span>
+              <span className="font-mono text-amber-500">
+                {nightLevelSlider.value} / {data.nightLevels ?? 10}
+              </span>
+            </div>
+            <input
+              type="range"
+              min={1}
+              max={data.nightLevels ?? 10}
+              step={1}
+              aria-label="Night brightness"
+              {...nightLevelSlider.input}
+              className="kubi-range"
+            />
+            <p className="text-[11px] text-zinc-500">1 is the faintest glow. Kubi shows a new level for 30 seconds.</p>
+          </div>
+
+          <button
+            onClick={() => mutation.mutate({ nightPreview: !data.nightPreview })}
+            className="w-full py-2.5 rounded-xl text-xs font-medium bg-zinc-950 hover:bg-zinc-900 text-zinc-300 border border-zinc-800 hover:border-zinc-700 transition-colors cursor-pointer"
+          >
+            {data.nightPreview ? "Stop the preview" : "Preview night for 30 seconds"}
+          </button>
+        </div>
+      ),
+    },
+    // MAZE ITEM
+    {
+      headerContent: (
+        <div className="flex items-center gap-3 font-medium text-zinc-100">
+          <Gamepad2 size={18} className="text-amber-500" /> Maze
+        </div>
+      ),
+      bodyContent: (
+        <div className="space-y-4 text-sm">
+          <p className="text-xs text-zinc-500 leading-relaxed">
+            Lay Kubi on his back, screen to the sky, and tilt him to roll the ball to the gold square. Each finished
+            board unlocks the next.
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800/50">
+              <span className="text-zinc-500 text-xs block mb-1">BOARD</span>
+              <span className="font-mono text-zinc-200">
+                {data.mazeBoard ?? 1} <span className="text-zinc-500">of {data.mazeCount ?? "-"}</span>
+              </span>
+            </div>
+            <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800/50">
+              <span className="text-zinc-500 text-xs block mb-1">BEST TIMES</span>
+              <span className="font-mono text-zinc-200">{data.mazeSolved ?? 0}</span>
+            </div>
+          </div>
+          {!mazeResetArmed ? (
+            <button
+              onClick={() => setMazeResetArmed(true)}
+              className="w-full py-2.5 rounded-xl text-xs font-medium bg-zinc-950 hover:bg-zinc-900 text-zinc-300 border border-zinc-800 hover:border-zinc-700 transition-colors cursor-pointer"
+            >
+              Reset maze progress...
+            </button>
+          ) : (
+            <div className="space-y-3 p-4 rounded-2xl bg-amber-500/5 border border-amber-500/30">
+              <p className="text-xs text-amber-100/80 leading-relaxed">
+                Back to board 1, and every best time is forgotten. Your settings stay as they are.
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => setMazeResetArmed(false)}
+                  className="py-2.5 rounded-xl text-xs font-medium bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-700 transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => mazeResetMutation.mutate()}
+                  disabled={mazeResetMutation.isPending}
+                  className="py-2.5 rounded-xl text-xs font-semibold bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 border border-amber-500/40 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  {mazeResetMutation.isPending ? "Resetting..." : "Reset the maze"}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      ),
+    },
+    // SOUND ITEM
+    {
+      headerContent: (
+        <div className="flex items-center gap-3 font-medium text-zinc-100">
+          <Volume2 size={18} className="text-amber-500" /> Sound
+        </div>
+      ),
+      bodyContent: (
+        <div className="space-y-4 text-sm">
+          <p className="text-xs text-zinc-500 leading-relaxed">
+            Volume of Kubi's chimes. Kubi plays a short chime at the new level when you let go.
+          </p>
+          <div className="flex items-center gap-3">
+            {volume === 0 ? (
+              <VolumeX size={16} className="text-zinc-500 shrink-0" />
+            ) : (
+              <Volume2 size={16} className="text-amber-500 shrink-0" />
+            )}
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={5}
+              aria-label="Chime volume"
+              {...volumeSlider.input}
+              className="kubi-range flex-1"
+            />
+            <span className="font-mono text-xs text-zinc-300 w-10 text-right">
+              {volume === 0 ? "Off" : `${volume}%`}
+            </span>
+          </div>
+        </div>
+      ),
+    },
     // HARDWARE & TELEMETRY ITEM
     {
       headerContent: (
@@ -450,9 +961,28 @@ function KubiDashboard() {
             </div>
             <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800/50">
               <span className="text-zinc-500 text-xs block mb-1 flex items-center gap-1">
-                <Battery size={12} className="text-amber-500" /> BATTERY
+                {data.batteryState === "charging" ? (
+                  <BatteryCharging size={12} className="text-amber-500" />
+                ) : data.batteryState === "full" ? (
+                  <BatteryFull size={12} className="text-amber-500" />
+                ) : (
+                  <Battery size={12} className="text-amber-500" />
+                )}{" "}
+                BATTERY
               </span>
-              <span className="font-mono text-zinc-300">{data.battery}%</span>
+              <span className="font-mono text-zinc-300">
+                {data.batteryState === "disconnected" ? "No battery" : data.battery < 0 ? "--%" : `${data.battery}%`}
+                {data.batteryVoltage && data.batteryState !== "disconnected" ? (
+                  <span className="text-zinc-500"> · {data.batteryVoltage.toFixed(2)} V</span>
+                ) : null}
+              </span>
+              <span className="block text-[11px] text-zinc-500 mt-0.5">{batteryLine(data)}</span>
+            </div>
+            <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800/50">
+              <span className="text-zinc-500 text-xs block mb-1 flex items-center gap-1">
+                <Gauge size={12} className="text-amber-500" /> AIR PRESSURE
+              </span>
+              <span className="font-mono text-zinc-300">{data.pressure ? `${data.pressure.toFixed(1)} hPa` : "-"}</span>
             </div>
             <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800/50">
               <span className="text-zinc-500 text-xs block mb-1 flex items-center gap-1">
@@ -470,6 +1000,52 @@ function KubiDashboard() {
         </div>
       ),
     },
+    // FACTORY RESET ITEM
+    {
+      headerContent: (
+        <div className="flex items-center gap-3 font-medium text-zinc-100">
+          <TriangleAlert size={18} className="text-rose-400" /> Factory Reset
+        </div>
+      ),
+      bodyContent: (
+        <div className="space-y-4 text-sm">
+          <p className="text-xs text-zinc-500 leading-relaxed">
+            Erases every saved WiFi network and all settings (Pomodoro, clock style, screen sleep), then
+            restarts Kubi into setup mode as if it were new.
+          </p>
+          {!resetArmed ? (
+            <button
+              onClick={() => setResetArmed(true)}
+              className="w-full py-2.5 rounded-xl text-xs font-medium bg-zinc-950 hover:bg-rose-500/10 text-rose-400 border border-zinc-800 hover:border-rose-500/40 transition-colors cursor-pointer"
+            >
+              Factory reset...
+            </button>
+          ) : (
+            <div className="space-y-3 p-4 rounded-2xl bg-rose-500/5 border border-rose-500/30">
+              <p className="text-xs text-rose-200 leading-relaxed">
+                This can't be undone. Kubi will disconnect from this WiFi. To use it again, join the{" "}
+                <span className="font-mono">Kubi-Setup</span> network and pick a WiFi.
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => setResetArmed(false)}
+                  className="py-2.5 rounded-xl text-xs font-medium bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-700 transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => factoryResetMutation.mutate()}
+                  disabled={factoryResetMutation.isPending}
+                  className="py-2.5 rounded-xl text-xs font-semibold bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/50 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  {factoryResetMutation.isPending ? "Erasing..." : "Erase everything"}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      ),
+    },
   ];
 
   if (isLoading) {
@@ -480,21 +1056,66 @@ function KubiDashboard() {
     );
   }
 
+  if (liveData === undefined) {
+    // Never reached the cube: show that plainly rather than fake values
+    return (
+      <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center p-6 font-montserrat">
+        <div className="max-w-sm text-center space-y-4">
+          <WifiOff size={32} className="mx-auto text-amber-500" />
+          <h1 className="text-lg font-medium">Can't reach Kubi</h1>
+          <p className="text-sm text-zinc-500 leading-relaxed">
+            Make sure Kubi is switched on and this device is on the same WiFi network, then open{" "}
+            <span className="font-mono text-zinc-300">http://kubi.local</span>.
+          </p>
+          <button
+            onClick={() => refetch()}
+            className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-amber-500 border border-amber-500/30 rounded-xl text-xs font-medium transition-colors cursor-pointer"
+          >
+            Try again
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 p-6 pb-24 font-montserrat">
-      <div className="max-w-md mx-auto space-y-6">
+      {isStale && (
+        <div className="sticky top-0 z-10 -mx-6 -mt-6 mb-6 px-6 py-3 bg-rose-500/10 border-b border-rose-500/30 text-rose-300 text-xs flex items-center justify-center gap-2">
+          <WifiOff size={14} />
+          Lost connection to Kubi. Showing the last state from{" "}
+          {new Date(dataUpdatedAt).toLocaleTimeString()}.
+        </div>
+      )}
+      <div
+        className={`max-w-md mx-auto space-y-6 transition-opacity ${
+          isStale ? "opacity-50 pointer-events-none select-none" : ""
+        }`}
+        aria-disabled={isStale}
+      >
         {/* 3D WIREFRAME SPINNING CUBE */}
         <SpinningCube />
 
         {/* HEADER */}
         <header className="space-y-1 mb-6 mt-4 text-center">
-          <h1 className="text-4xl font-medium tracking-[0.3em] text-center">
+          <h1 onClick={onTitleTap} className="text-4xl font-medium tracking-[0.3em] text-center select-none">
             KUBI
           </h1>
           <p className="text-zinc-500 text-sm tracking-wide text-center">
             Desk Companion
           </p>
         </header>
+
+        {creatorOpen && (
+          <div className="mb-6">
+            <CreatorPanel
+              mascotScene={data.mascotScene}
+              mascotPreview={data.mascotPreview}
+              mascotPreviewLeftMin={data.mascotPreviewLeftMin}
+              onClose={() => setCreator(false)}
+            />
+          </div>
+        )}
 
         {/* ================================================================= */}
         {/* DYNAMIC CONTEXTUAL SECTION (RESPONDS TO ACTIVE STATE OF CUBE)   */}
@@ -601,24 +1222,50 @@ function KubiDashboard() {
           </section>
         ) : (
           // --- NON-POMODORO CONTEXTUAL CARD ---
-          <section className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 shadow-xl flex items-center justify-between">
-            <div className="flex items-center gap-3.5">
-              <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl text-amber-500">
-                <activeFace.icon size={22} />
-              </div>
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
-                  Current Face Orientation
-                </p>
-                <h2 className="text-base font-medium text-zinc-100">{activeFace.name}</h2>
-              </div>
+          // Icon in its own column; label, name, hint and the face's one action
+          // each get a full line, so nothing squeezes on a phone.
+          <section className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 shadow-xl flex items-start gap-4">
+            <div className="shrink-0 p-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl text-amber-500">
+              <activeFace.icon size={22} />
             </div>
-            <button
-              onClick={() => mutation.mutate({ mode: 1 })}
-              className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-amber-500 border border-amber-500/30 rounded-xl text-xs font-medium transition-colors cursor-pointer"
-            >
-              Start Pomodoro
-            </button>
+            <div className="min-w-0 flex-1 space-y-1">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+                Current face{" · "}
+                {activeFace.name.includes(":") ? activeFace.name.split(":")[0] : ""}
+              </p>
+              <h2 className="text-base font-medium text-zinc-100 leading-snug">
+                {activeFace.name.includes(":") ? activeFace.name.split(":")[1].trim() : activeFace.name}
+              </h2>
+              <p className="text-xs text-zinc-500 leading-relaxed">
+                {data.mode === 0
+                  ? "Shake Kubi to switch between the digital and analog clock."
+                  : data.mode === 2
+                  ? data.mascotPreview
+                    ? "Showing a scene you picked. Tap Kubi and he blinks."
+                    : "Kubi picks his scene from the time and day. Tap him and he blinks."
+                  : data.mode === 3
+                  ? "Tap Kubi for the next colour."
+                  : data.mode === MAZE_MODE.id
+                  ? "Tilt to roll the ball to the gold flag. Stand him up and hold 2 s to leave."
+                  : activeFace.desc}
+              </p>
+              {data.mode === 0 && (
+                <button
+                  onClick={() => mutation.mutate({ clockAnalog: !data.clockAnalog })}
+                  className="mt-2 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-amber-500 border border-amber-500/30 rounded-xl text-xs font-medium transition-colors cursor-pointer"
+                >
+                  {data.clockAnalog ? "Show digital clock" : "Show analog clock"}
+                </button>
+              )}
+              {data.mode === 2 && data.mascotPreview && (
+                <button
+                  onClick={() => mutation.mutate({ mascotScene: -1 })}
+                  className="mt-2 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 rounded-xl text-xs font-medium transition-colors cursor-pointer"
+                >
+                  Let Kubi choose
+                </button>
+              )}
+            </div>
           </section>
         )}
 
@@ -634,7 +1281,7 @@ function KubiDashboard() {
               </h2>
             </div>
             <span className="px-2.5 py-1 text-xs font-medium rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/30">
-              Face {data.mode + 1}
+              {data.mode === MAZE_MODE.id ? "Screen up" : `Face ${data.mode + 1}`}
             </span>
           </div>
 
@@ -661,103 +1308,29 @@ function KubiDashboard() {
               );
             })}
           </div>
-        </section>
 
-        {/* 2. GOOGLE CALENDAR ICAL SYNC */}
-        <section className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-xl space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Calendar size={18} className="text-pink-400" />
-              <h2 className="text-lg font-medium text-zinc-100">Google Calendar Sync</h2>
-            </div>
-            {!data.hasIcs ? (
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono bg-zinc-800 text-zinc-400 border border-zinc-700">
-                No calendar connected, that's sad
-              </span>
-            ) : !data.hasEvents ? (
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono bg-amber-500/10 text-amber-400 border border-amber-500/30">
-                Nothing happening, I guess
-              </span>
-            ) : (
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono bg-pink-500/10 text-pink-400 border border-pink-500/30 font-semibold">
-                {data.scheduleDay || "Schedule Active"}
-              </span>
-            )}
-          </div>
-          <p className="text-zinc-500 text-xs leading-relaxed">
-            Paste your private iCal (.ics) link or upload a local .ics file. Kubi displays up to 5 days of events with marquee ticker animations for long items.
+          <p className="flex items-center gap-2 pt-2 border-t border-zinc-800/80 text-xs text-zinc-500">
+            <Gamepad2 size={14} className="text-zinc-400" />
+            Lay Kubi on his back, screen to the sky, for the tilt maze.
           </p>
-          <div className="space-y-2">
-            <div className="flex gap-2">
-              <input
-                type="text"
-                placeholder="https://calendar.google.com/calendar/ical/.../basic.ics"
-                value={icalInput || data.icalUrl}
-                onChange={(e) => setIcalInput(e.target.value)}
-                className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-xs text-zinc-200 placeholder-zinc-700 focus:outline-none focus:border-pink-500/50"
-              />
-              <button
-                onClick={() => {
-                  mutation.mutate({ icalUrl: icalInput });
-                  toast.success("Calendar URL saved");
-                }}
-                className="px-5 py-2.5 bg-pink-500/10 hover:bg-pink-500/20 text-pink-400 border border-pink-500/30 rounded-xl text-xs font-semibold transition-colors cursor-pointer shrink-0"
-              >
-                Save URL
-              </button>
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
-              <label className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 text-xs font-medium cursor-pointer transition-colors">
-                <Upload size={13} className="text-pink-400" />
-                <span>Upload .ics</span>
-                <input type="file" accept=".ics,text/calendar" onChange={handleUploadIcs} className="hidden" />
-              </label>
-
-              <button
-                type="button"
-                onClick={handleLoadSample}
-                className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 text-xs font-medium transition-colors cursor-pointer"
-                title="Loads a rich test schedule with >4 items today and long ticker titles"
-              >
-                <FileText size={13} className="text-amber-400" />
-                <span>Load Sample</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleEmptyCalendar}
-                className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 text-xs font-medium transition-colors cursor-pointer"
-                title="Sets an empty calendar to test 'Nothing happening, I guess'"
-              >
-                <span>Empty Cal</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleClearCalendar}
-                className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-800/80 hover:bg-rose-500/20 text-zinc-400 hover:text-rose-400 border border-zinc-700 hover:border-rose-500/30 text-xs font-medium transition-colors cursor-pointer"
-                title="Clears all calendar data to test 'No calendar connected, that's sad'"
-              >
-                <Trash2 size={13} />
-                <span>Clear ICS</span>
-              </button>
-            </div>
-          </div>
         </section>
 
-        {/* 3. ACCORDION (POMODORO SETTINGS + HARDWARE TELEMETRY) */}
+        {/* 2. ACCORDION (POMODORO, SLEEP, HARDWARE TELEMETRY) */}
         <div className="pt-2">
           <Accordion items={accordionItems} />
         </div>
 
-        {/* 4. MANUAL & SIMULATOR LINKS */}
+        {/* 3. MANUAL & SIMULATOR LINKS */}
         <div className="pt-12 flex items-center justify-center gap-6">
-          <Link to="/sim" className="text-amber-500 hover:text-amber-400 text-xs font-semibold tracking-widest uppercase transition-colors flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-            Launch Virtual Hardware Workbench
-          </Link>
-          <span className="text-zinc-700">•</span>
+          {__KUBI_SIM__ && (
+            <>
+              <Link to="/sim" className="text-amber-500 hover:text-amber-400 text-xs font-semibold tracking-widest uppercase transition-colors flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                Launch Virtual Hardware Workbench
+              </Link>
+              <span className="text-zinc-700">•</span>
+            </>
+          )}
           <Link to="/manual" className="text-zinc-400 hover:text-amber-500 text-xs underline tracking-widest uppercase transition-colors">
             Kubi User Manual &amp; Gestures Guide
           </Link>

@@ -3,11 +3,13 @@ import sys
 import re
 from pathlib import Path
 
+# Without Pillow, skip regeneration and build with the committed KubiSprites.*.
+# Never sys.exit() here: under PlatformIO that ends the whole build early and
+# it still reports SUCCESS, with no firmware built.
 try:
     from PIL import Image, ImageSequence
 except ImportError:
-    print("[SPRITE_BUILDER] Warning: Pillow is not installed. Run 'pip install pillow' to enable automatic sprite conversion.")
-    sys.exit(0)
+    Image = None
 
 # Paths relative to the firmware directory
 try:
@@ -54,6 +56,9 @@ def process_image(img):
     return w, h, pixels
 
 def build():
+    if Image is None:
+        print("[SPRITE_BUILDER] Warning: Pillow is not installed, using the committed sprites. Run 'pip install pillow' to regenerate them.")
+        return
     if not ASSETS_DIR.exists():
         ASSETS_DIR.mkdir(parents=True, exist_ok=True)
 

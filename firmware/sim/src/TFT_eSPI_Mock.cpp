@@ -4,6 +4,7 @@
 
 uint16_t sim_framebuffer[240 * 320] = {0};
 uint8_t sim_screen_rotation = 0;
+uint64_t sim_pixel_writes = 0;
 
 void TFT_eSPI::drawCircleHelper(int32_t x0, int32_t y0, int32_t r, uint8_t cornername, uint16_t color) {
     int32_t f = 1 - r;
@@ -228,6 +229,29 @@ void TFT_eSPI::drawChar(int32_t x, int32_t y, char c, uint16_t fg, uint16_t bg, 
     }
 }
 
+// Opaque background for a drawn string plus TFT_eSPI-style padding.
+// Padding goes right of left-aligned text, both sides of centred text and
+// left of right-aligned text.
+void TFT_eSPI::fillTextBackground(int32_t sx, int32_t sy, int32_t w, int32_t h) {
+    if (_textColor == _textBgColor) return; // transparent
+    fillRect(sx, sy, w, h, _textBgColor);
+    if (_textPadding > w) {
+        int32_t extra = _textPadding - w;
+        switch (_textDatum) {
+            case TC_DATUM: case MC_DATUM: case BC_DATUM:
+                fillRect(sx - extra / 2, sy, extra / 2, h, _textBgColor);
+                fillRect(sx + w, sy, extra - extra / 2, h, _textBgColor);
+                break;
+            case TR_DATUM: case MR_DATUM: case BR_DATUM:
+                fillRect(sx - extra, sy, extra, h, _textBgColor);
+                break;
+            default:
+                fillRect(sx + w, sy, extra, h, _textBgColor);
+                break;
+        }
+    }
+}
+
 int16_t TFT_eSPI::drawString(const String& string, int32_t poX, int32_t poY, uint8_t font) {
     const char* str = string.c_str();
     int len = (int)strlen(str);
@@ -264,6 +288,8 @@ int16_t TFT_eSPI::drawString(const String& string, int32_t poX, int32_t poY, uin
             case BL_DATUM: sy -= totalH; break;
             default: break;
         }
+
+        fillTextBackground(sx, sy, totalW, totalH);
 
         int curX = sx;
         for (int i = 0; i < len; i++) {
@@ -306,6 +332,8 @@ int16_t TFT_eSPI::drawString(const String& string, int32_t poX, int32_t poY, uin
         case BL_DATUM: sy -= totalH; break;
         default: break;
     }
+
+    fillTextBackground(sx, sy, totalW, totalH);
 
     for (int i = 0; i < len; i++) {
         drawChar(sx + i * charW, sy, str[i], _textColor, _textBgColor, scale);

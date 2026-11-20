@@ -5,17 +5,50 @@
 #include <LittleFS.h>
 #include <WiFi.h>
 #include "PomodoroManager.h"
-#include "ScheduleManager.h"
+#include "DisplayManager.h"
+#include "AudioManager.h"
+#include "KubiScenes.h"
+#include "SceneSchedule.h"
+#include "SensorManager.h"
+#include "NightMode.h"
+#include "MazeGame.h"
+#include <esp_system.h>
 
 // --- SHARED GLOBALS (Defined in main.cpp) ---
 extern volatile KubiMode currentMode;
 extern volatile float roomTemperature;
 extern volatile int batteryPercentage;
-extern String secretIcalUrl;
+extern volatile float batteryVoltage;
+extern volatile int batteryStateCode;
+extern volatile int batteryMinutesLeft;
+extern volatile int chargeAlertHigh;
+extern volatile int chargeAlertLow;
+extern volatile float roomPressure;
+
+static const char* batteryStateName(int s) {
+    // 3 = cells cut off by the charger's protection; 4 = just started, not
+    // yet sure whether it is charging (main.cpp updateBattery)
+    return s == 4 ? "checking" : s == 3 ? "disconnected" : s == 2 ? "full" : s == 1 ? "charging" : "draining";
+}
 extern volatile bool isScreenOverrideActive;
-extern String screenOverrideText;
+extern volatile bool factoryResetRequested;
 extern bool clockAnalogView;
 extern int mascotSceneIndex;
+extern volatile int mascotPreviewScene;
+extern volatile uint32_t mascotPreviewAt;
+extern volatile uint32_t mascotPreviewMs;
+extern volatile int birthdayMMDD;
+extern volatile bool napRequested;
+
+// Night mode and maze reset (main.cpp)
+extern volatile bool nightEnabled;
+extern volatile int nightFromMin;
+extern volatile int nightToMin;
+extern volatile int nightFaces;
+extern volatile int nightLevel;
+extern volatile uint32_t nightPreviewUntil;
+extern volatile bool nightActive;
+extern volatile bool mazeResetRequested;
 
 // Diagnostics
 extern volatile float diagAccelX;
@@ -36,11 +69,23 @@ void setupAPIRoutes(AsyncWebServer& server) {
         doc["mode"] = (int)currentMode;
         doc["temp"] = roomTemperature;
         doc["battery"] = batteryPercentage;
-        doc["icalUrl"] = secretIcalUrl;
-        doc["hasIcs"] = schedule.hasIcs();
-        doc["hasEvents"] = schedule.hasEvents();
-        doc["scheduleDay"] = schedule.getCurrentDayTitle();
+        doc["batteryVoltage"] = roundf(batteryVoltage * 100.0f) / 100.0f;
+        doc["batteryState"] = batteryStateName(batteryStateCode);
+        doc["batteryMinutes"] = batteryMinutesLeft; // to empty or to full, -1 = still estimating
+        doc["pressure"] = roundf(roomPressure * 10.0f) / 10.0f;
+        doc["chargeAlertHigh"] = chargeAlertHigh;
+        doc["chargeAlertLow"] = chargeAlertLow;
         doc["mascotScene"] = mascotSceneIndex;
+        doc["mascotPreview"] = mascotPreviewScene >= 0; // false: Kubi's own pick
+        if (mascotPreviewScene >= 0) {
+            uint32_t gone = millis() - mascotPreviewAt;
+            doc["mascotPreviewLeftMin"] = gone < mascotPreviewMs ? (int)((mascotPreviewMs - gone + 59999UL) / 60000UL) : 0;
+        }
+        if (birthdayMMDD > 0) {
+            char bday[8];
+            snprintf(bday, sizeof(bday), "%02d-%02d", birthdayMMDD / 100, birthdayMMDD % 100);
+            doc["birthday"] = bday;
+        }
 
         // Detailed Pomodoro State
         JsonObject pomoObj = doc["pomodoro"].to<JsonObject>();
@@ -64,6 +109,26 @@ void setupAPIRoutes(AsyncWebServer& server) {
         doc["pomodoroFocus"] = pomodoro.getFocusMinutes();
         doc["pomodoroBreak"] = pomodoro.getShortBreakMinutes();
         doc["clockAnalog"] = clockAnalogView;
+        doc["sleepTimeoutMin"] = display.getSleepTimeoutMinutes();
+        doc["isSleeping"] = display.isSleeping();
+        doc["volume"] = (int)lroundf(audio.getVolume() * 100.0f);
+
+        // Night mode (NightMode.h); times in minutes after midnight
+        doc["nightOn"] = nightEnabled;
+        doc["nightFrom"] = nightFromMin;
+        doc["nightTo"] = nightToMin;
+        doc["nightFaces"] = nightFaces;
+        doc["nightLevel"] = nightLevel;
+        doc["nightLevels"] = NIGHT_LEVEL_COUNT;
+        doc["isNight"] = nightActive;
+        doc["nightPreview"] = nightPreviewUntil != 0;
+
+        // Maze progress: the board he is on (1-based) and how many have a best time
+        int mazeCurrent = 0, mazeSolved = 0;
+        MazeGame::readProgress(mazeCurrent, mazeSolved);
+        doc["mazeBoard"] = mazeCurrent + 1;
+        doc["mazeCount"] = MAZE_BOARD_COUNT;
+        doc["mazeSolved"] = mazeSolved;
 
         serializeJson(doc, *response);
         request->send(response);
@@ -71,24 +136,20 @@ void setupAPIRoutes(AsyncWebServer& server) {
 
     // =========================================================================
     // 2. POST /api/settings
-    // React sends user configuration changes (Pomodoro, iCal URL, routines)
+    // React sends user configuration changes (face, Pomodoro, clock, sleep)
     // =========================================================================
     AsyncCallbackJsonWebHandler* settingsHandler = new AsyncCallbackJsonWebHandler("/api/settings", [](AsyncWebServerRequest *request, JsonVariant &json) {
         JsonObject jsonObj = json.as<JsonObject>();
 
         // 1. Mode Change
+        // The core-1 loop applies the matching screen rotation; never touch the
+        // TFT from this (AsyncTCP) task.
         if (jsonObj["mode"].is<int>()) {
-            currentMode = (KubiMode)jsonObj["mode"].as<int>();
-        }
-
-        // 2. Calendar Sync URL
-        if (jsonObj["icalUrl"].is<const char*>()) {
-            secretIcalUrl = jsonObj["icalUrl"].as<String>();
-            Preferences prefs;
-            prefs.begin("kubi_settings", false);
-            prefs.putString("icalUrl", secretIcalUrl);
-            prefs.end();
-            schedule.setIcsUrl(secretIcalUrl);
+            int mode = jsonObj["mode"].as<int>();
+            if (mode >= MODE_CLOCK_IDLE && mode <= MODE_AMBIENT) {
+                currentMode = (KubiMode)mode;
+                display.requestWake();
+            }
         }
 
         // 3. Pomodoro Durations
@@ -131,9 +192,103 @@ void setupAPIRoutes(AsyncWebServer& server) {
             prefs.end();
         }
 
-        if (jsonObj["mascotScene"].is<int>()) {
-            mascotSceneIndex = jsonObj["mascotScene"].as<int>() % 10;
-            if (mascotSceneIndex < 0) mascotSceneIndex += 10;
+        // Mascot diorama scene: a preview for KUBI_SCENE_PREVIEW_MS (or
+        // "mascotPreviewMin" from the Creator panel), then Kubi picks his own
+        // again (-1 hands back at once). The hardware loop applies it; nothing
+        // here touches the display. Any scene works, Birthday and Christmas
+        // included; the saved birthday date is never touched.
+        if (jsonObj["mascotScene"].is<int>() && ALL_KUBI_SCENE_COUNT > 0) {
+            int n = (int)ALL_KUBI_SCENE_COUNT;
+            int want = jsonObj["mascotScene"].as<int>();
+            if (want < 0) {
+                mascotPreviewScene = -1;
+            } else {
+                int minutes = jsonObj["mascotPreviewMin"] | 0;
+                if (minutes > MASCOT_PREVIEW_MAX_MIN) minutes = MASCOT_PREVIEW_MAX_MIN;
+                mascotPreviewMs = minutes > 0 ? (uint32_t)minutes * 60000UL : KUBI_SCENE_PREVIEW_MS;
+                mascotPreviewAt = millis();
+                mascotPreviewScene = want % n;
+                mascotSceneIndex = want % n;
+            }
+        }
+
+        // Charge reminders: 0 = off, else the percent to remind at
+        for (const char* key : { "chargeAlertHigh", "chargeAlertLow" }) {
+            if (!jsonObj[key].is<int>()) continue;
+            int pct = jsonObj[key].as<int>();
+            pct = pct <= 0 ? 0 : (pct > 100 ? 100 : pct);
+            bool high = key[11] == 'H';
+            if (high) chargeAlertHigh = pct; else chargeAlertLow = pct;
+            Preferences prefs;
+            prefs.begin("kubi_settings", false);
+            prefs.putInt(high ? "alertHi" : "alertLo", pct);
+            prefs.end();
+        }
+
+        // Wilhelm's birthday, "MM-DD" ("" clears it): the Birthday scene's day
+        if (jsonObj["birthday"].is<const char*>()) {
+            const char* b = jsonObj["birthday"].as<const char*>();
+            int mm = 0, dd = 0;
+            int value = (sscanf(b, "%d-%d", &mm, &dd) == 2 && mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) ? mm * 100 + dd : 0;
+            birthdayMMDD = value;
+            Preferences prefs;
+            prefs.begin("kubi_settings", false);
+            prefs.putInt("bday", value);
+            prefs.end();
+        }
+
+        // Chime volume, 0-100 %. A tap chime confirms the new level, so the
+        // dashboard slider can be set by ear (playChime is safe from any task).
+        if (jsonObj["volume"].is<int>()) {
+            int v = constrain(jsonObj["volume"].as<int>(), 0, 100);
+            audio.setVolume(v / 100.0f);
+            Preferences prefs;
+            prefs.begin("kubi_settings", false);
+            prefs.putInt("volume", v);
+            prefs.end();
+            audio.playChime(CHIME_TAP_FEEDBACK);
+        }
+
+        // Night mode. Times are minutes after midnight; faces a KubiMode bit
+        // mask. A new brightness level previews itself so it can be judged.
+        {
+            Preferences prefs;
+            bool opened = false;
+            auto open = [&]() { if (!opened) { prefs.begin("kubi_settings", false); opened = true; } };
+            if (jsonObj["nightOn"].is<bool>()) {
+                nightEnabled = jsonObj["nightOn"].as<bool>();
+                open(); prefs.putBool("nightOn", nightEnabled);
+            }
+            if (jsonObj["nightFrom"].is<int>()) {
+                nightFromMin = constrain(jsonObj["nightFrom"].as<int>(), 0, 1439);
+                open(); prefs.putInt("nightFrom", nightFromMin);
+            }
+            if (jsonObj["nightTo"].is<int>()) {
+                nightToMin = constrain(jsonObj["nightTo"].as<int>(), 0, 1439);
+                open(); prefs.putInt("nightTo", nightToMin);
+            }
+            if (jsonObj["nightFaces"].is<int>()) {
+                nightFaces = jsonObj["nightFaces"].as<int>() & NIGHT_ALL_FACES;
+                open(); prefs.putInt("nightFaces", nightFaces);
+            }
+            if (jsonObj["nightLevel"].is<int>()) {
+                nightLevel = constrain(jsonObj["nightLevel"].as<int>(), 1, NIGHT_LEVEL_COUNT);
+                open(); prefs.putInt("nightLvl", nightLevel);
+                nightPreviewUntil = millis() + NIGHT_PREVIEW_MS;
+            }
+            if (opened) prefs.end();
+            if (jsonObj["nightPreview"].is<bool>()) {
+                nightPreviewUntil = jsonObj["nightPreview"].as<bool>() ? millis() + NIGHT_PREVIEW_MS : 0;
+            }
+        }
+
+        // 5. Screen sleep timeout (minutes, 0 = never)
+        if (jsonObj["sleepTimeoutMin"].is<int>()) {
+            display.setSleepTimeoutMinutes(jsonObj["sleepTimeoutMin"].as<int>());
+            Preferences prefs;
+            prefs.begin("kubi_settings", false);
+            prefs.putInt("sleepMin", display.getSleepTimeoutMinutes());
+            prefs.end();
         }
 
         request->send(200, "application/json", "{\"status\":\"success\"}");
@@ -174,15 +329,102 @@ void setupAPIRoutes(AsyncWebServer& server) {
         JsonObject jsonObj = json.as<JsonObject>();
 
         if (jsonObj["message"].is<const char*>()) {
-            screenOverrideText = jsonObj["message"].as<String>();
-            isScreenOverrideActive = true;
-            Serial.printf("[OVERRIDE] Custom alert received: %s\n", screenOverrideText.c_str());
+            const char* message = jsonObj["message"].as<const char*>();
+            if (!*message) {
+                isScreenOverrideActive = false; // empty message: take the banner down
+                request->send(200, "application/json", "{\"status\":\"alert_cleared\"}");
+                return;
+            }
+            char text[OVERRIDE_TEXT_MAX];
+            composeBanner(text, sizeof(text), jsonObj["title"] | "", message);
+            setOverrideText(text);
+            isScreenOverrideActive = true; // Set after the text so the reader never sees a stale banner
+            display.requestWake();
+            Serial.printf("[OVERRIDE] Custom alert received: %s\n", getOverrideText().c_str());
             request->send(200, "application/json", "{\"status\":\"alert_displayed\"}");
         } else {
             request->send(400, "application/json", "{\"error\":\"missing message field\"}");
         }
     });
     server.addHandler(overrideHandler);
+
+    // =========================================================================
+    // 4b. POST /api/chime {"chime": "tap"|"done"|"fanfare"|"ping"|"ouch"}
+    // Creator panel: play any chime. playChime() is safe from any task.
+    // =========================================================================
+    AsyncCallbackJsonWebHandler* chimeHandler = new AsyncCallbackJsonWebHandler("/api/chime", [](AsyncWebServerRequest *request, JsonVariant &json) {
+        KubiChime chime = chimeByName(json["chime"] | "");
+        if (chime == CHIME_NONE) {
+            request->send(400, "application/json", "{\"error\":\"unknown chime\"}");
+            return;
+        }
+        audio.playChime(chime);
+        request->send(200, "application/json", "{\"status\":\"playing\"}");
+    });
+    server.addHandler(chimeHandler);
+
+    // =========================================================================
+    // 4b2. POST /api/maze/reset {"confirm": true}: back to board 1, every best
+    // time forgotten. The hardware loop does it (it owns the maze).
+    // =========================================================================
+    AsyncCallbackJsonWebHandler* mazeResetHandler = new AsyncCallbackJsonWebHandler("/api/maze/reset", [](AsyncWebServerRequest *request, JsonVariant &json) {
+        if (!(json["confirm"] | false)) {
+            request->send(400, "application/json", "{\"error\":\"confirm required\"}");
+            return;
+        }
+        mazeResetRequested = true;
+        request->send(200, "application/json", "{\"status\":\"resetting\"}");
+    });
+    server.addHandler(mazeResetHandler);
+
+    // =========================================================================
+    // 4c. Motion recorder, for tuning gestures on the real cube
+    // POST /api/motion-log {"seconds": 1-30} starts a recording.
+    // GET  /api/motion-log: {"state":0|1} while idle or recording; once done,
+    // CSV "t,x,y,z,delta,total,flags" (ms; centi-m/s^2; MotionFlag bits).
+    // =========================================================================
+    AsyncCallbackJsonWebHandler* motionLogStart = new AsyncCallbackJsonWebHandler("/api/motion-log", [](AsyncWebServerRequest *request, JsonVariant &json) {
+        int seconds = json["seconds"] | 20;
+        if (seconds < 1) seconds = 1;
+        if (seconds > 30) seconds = 30;
+        sensors.requestMotionLog((uint16_t)seconds);
+        request->send(200, "application/json", "{\"status\":\"recording\"}");
+    });
+    motionLogStart->setMethod(HTTP_POST); // GET below downloads the log
+    server.addHandler(motionLogStart);
+    server.on("/api/motion-log", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (sensors.motionLogState() != 2) {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "{\"state\":%d}", sensors.motionLogState());
+            request->send(200, "application/json", buf);
+            return;
+        }
+        // Chunked: up to 1500 lines would not fit one buffer
+        AsyncWebServerResponse* response = request->beginChunkedResponse("text/csv",
+            [](uint8_t* out, size_t maxLen, size_t index) -> size_t {
+                static int row = 0;
+                if (index == 0) row = -1; // header first
+                int count = 0;
+                const MotionSample* log = sensors.motionLog(count);
+                size_t len = 0;
+                while (row < count) {
+                    char line[64];
+                    int n;
+                    if (row < 0) n = snprintf(line, sizeof(line), "t,x,y,z,delta,total,flags\n");
+                    else {
+                        const MotionSample& m = log[row];
+                        n = snprintf(line, sizeof(line), "%lu,%d,%d,%d,%d,%d,%u\n", (unsigned long)m.t,
+                                     m.x, m.y, m.z, m.delta, m.total, (unsigned)m.flags);
+                    }
+                    if (len + n > maxLen) break;
+                    memcpy(out + len, line, n);
+                    len += n;
+                    row++;
+                }
+                return len;
+            });
+        request->send(response);
+    });
 
     // =========================================================================
     // 5. GET /api/diagnostics
@@ -192,49 +434,104 @@ void setupAPIRoutes(AsyncWebServer& server) {
         AsyncResponseStream *response = request->beginResponseStream("application/json");
         JsonDocument doc;
 
+        doc["cpuMhz"] = getCpuFrequencyMhz();
         doc["accelX"] = diagAccelX;
         doc["accelY"] = diagAccelY;
         doc["accelZ"] = diagAccelZ;
         doc["temp"] = roomTemperature;
         doc["battery"] = batteryPercentage;
+        doc["batteryVoltage"] = roundf(batteryVoltage * 100.0f) / 100.0f;
+        doc["batteryState"] = batteryStateName(batteryStateCode);
+        doc["batteryMinutes"] = batteryMinutesLeft; // to empty or to full, -1 = still estimating
+        doc["pressure"] = roundf(roomPressure * 10.0f) / 10.0f;
+        doc["chargeAlertHigh"] = chargeAlertHigh;
+        doc["chargeAlertLow"] = chargeAlertLow;
         doc["rssi"] = WiFi.RSSI();
         doc["freeHeap"] = ESP.getFreeHeap();
         doc["uptime"] = millis() / 1000;
+        // Why the last restart happened (an unexpected one shows as panic,
+        // brownout or watchdog rather than poweron/software)
+        static const char* const RESET_NAMES[] = { "unknown", "poweron", "external", "software", "panic",
+            "int_wdt", "task_wdt", "wdt", "deepsleep", "brownout", "sdio" };
+        int rr = (int)esp_reset_reason();
+        doc["resetReason"] = (rr >= 0 && rr <= 10) ? RESET_NAMES[rr] : "other";
         doc["mode"] = (int)currentMode;
+
+        // Why the last naps ended (main.cpp checkNap), newest first, local time
+        {
+            NapWakeRecord log[NAP_LOG_MAX] = {};
+            Preferences prefs;
+            prefs.begin("kubi_settings", true);
+            prefs.getBytes("napLog", log, sizeof(log));
+            prefs.end();
+            JsonArray wakes = doc["napWakes"].to<JsonArray>();
+            for (const NapWakeRecord& w : log) {
+                if (w.reason == NAP_WAKE_NONE) continue;
+                JsonObject o = wakes.add<JsonObject>();
+                char when[24] = "unknown";
+                if (w.at) {
+                    time_t t = (time_t)w.at;
+                    struct tm lt;
+                    localtime_r(&t, &lt);
+                    strftime(when, sizeof(when), "%Y-%m-%d %H:%M:%S", &lt);
+                }
+                o["at"] = when;
+                if (w.at && w.start && w.at >= w.start) o["nappedMin"] = (w.at - w.start) / 60;
+                o["reason"] = w.reason == NAP_WAKE_MOVED ? "moved"
+                            : w.reason == NAP_WAKE_SENSOR_SILENT ? "sensor silent" : "reset or power";
+                if (w.reason == NAP_WAKE_MOVED) {
+                    char axes[8] = "";
+                    if (w.axes & 4) strcat(axes, "x");
+                    if (w.axes & 2) strcat(axes, "y");
+                    if (w.axes & 1) strcat(axes, "z");
+                    o["axes"] = axes[0] ? axes : "none";
+                }
+            }
+        }
 
         serializeJson(doc, *response);
         request->send(response);
     });
 
     // =========================================================================
-    // 6. CALENDAR API ROUTES
+    // POST /api/nap: Kubi says good night and deep-sleeps until picked up.
+    // Only sets the flag; the hardware loop draws, configures and sleeps.
     // =========================================================================
-    AsyncCallbackJsonWebHandler* calendarUploadHandler = new AsyncCallbackJsonWebHandler("/api/calendar/ics", [](AsyncWebServerRequest *request, JsonVariant &json) {
+    server.on("/api/nap", HTTP_POST, [](AsyncWebServerRequest *request) {
+        napRequested = true;
+        request->send(200, "application/json", "{\"status\":\"napping\"}");
+    });
+
+    // =========================================================================
+    // 6. POST /api/factory-reset
+    // Wipes settings, saved networks and stored WiFi, then restarts into setup.
+    // Requires {"confirm":"ERASE"} so a stray request cannot trigger it.
+    // =========================================================================
+    AsyncCallbackJsonWebHandler* resetHandler = new AsyncCallbackJsonWebHandler("/api/factory-reset", [](AsyncWebServerRequest *request, JsonVariant &json) {
         JsonObject jsonObj = json.as<JsonObject>();
-        if (jsonObj["ics"].is<const char*>()) {
-            String icsData = jsonObj["ics"].as<String>();
-            schedule.setIcsContent(icsData);
-            request->send(200, "application/json", "{\"status\":\"ics_saved\"}");
+        const char* confirm = jsonObj["confirm"] | "";
+        if (strcmp(confirm, FACTORY_RESET_CONFIRM) == 0) {
+            factoryResetRequested = true; // hardware loop does the wipe after we reply
+            request->send(200, "application/json", "{\"status\":\"resetting\"}");
         } else {
-            request->send(400, "application/json", "{\"error\":\"missing ics field\"}");
+            request->send(400, "application/json", "{\"error\":\"confirm required\"}");
         }
     });
-    server.addHandler(calendarUploadHandler);
-
-    server.on("/api/calendar/sample", HTTP_POST, [](AsyncWebServerRequest *request) {
-        schedule.loadSampleSchedule();
-        request->send(200, "application/json", "{\"status\":\"sample_loaded\"}");
-    });
-
-    server.on("/api/calendar", HTTP_DELETE, [](AsyncWebServerRequest *request) {
-        schedule.clearIcs();
-        secretIcalUrl = "";
-        request->send(200, "application/json", "{\"status\":\"calendar_cleared\"}");
-    });
+    server.addHandler(resetHandler);
 
     // =========================================================================
-    // 7. SERVE STATIC REACT FRONTEND FROM LITTLEFS
-    // Default file: index.html
+    // 7. SERVE STATIC REACT FRONTEND FROM LITTLEFS /www
+    // Only the web build lives under /www (Vite outDir firmware/data/www), so
+    // nothing else on the filesystem is reachable over HTTP.
     // =========================================================================
-    server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
+    server.serveStatic("/", LittleFS, "/www/").setDefaultFile("index.html");
+
+    // Client-side routes (/manual) have no file: hand them the SPA shell.
+    server.onNotFound([](AsyncWebServerRequest *request) {
+        if (request->method() == HTTP_GET && !request->url().startsWith("/api/")) {
+            request->send(LittleFS, "/www/index.html", "text/html");
+        } else {
+            request->send(404, "application/json", "{\"error\":\"not found\"}");
+        }
+    });
 }
